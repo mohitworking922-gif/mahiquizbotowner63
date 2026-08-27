@@ -1,43 +1,31 @@
-import sqlite3
-import json
 import os
+import json
 import random
 import string
+from pymongo import MongoClient
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "quiz_bot.db")
+# Railway se MONGODB_URI read karein
+MONGO_URI = os.getenv("MONGODB_URI") or os.getenv("MONGO_URI")
+
+client = None
+db = None
+quizzes_col = None
+schedules_col = None
+
+if MONGO_URI:
+    try:
+        client = MongoClient(MONGO_URI)
+        # Default Database connect karein ya 'quiz_bot_db' use karein
+        db = client.get_database() if client.get_default_database() is not None else client["quiz_bot_db"]
+        quizzes_col = db["quizzes"]
+        schedules_col = db["schedules"]
+        print("✅ Successfully connected to MongoDB!")
+    except Exception as e:
+        print(f"❌ MongoDB Connection Error: {e}")
 
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS quizzes (
-            quiz_id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            timer INTEGER NOT NULL,
-            questions_json TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            creator_name TEXT,
-            sections_enabled INTEGER DEFAULT 0,
-            sections_json TEXT DEFAULT '[]'
-        )
-    """)
-    # Migration for existing databases
-    cursor.execute("PRAGMA table_info(quizzes)")
-    columns = [info[1] for info in cursor.fetchall()]
-    if "sections_enabled" not in columns:
-        cursor.execute("ALTER TABLE quizzes ADD COLUMN sections_enabled INTEGER DEFAULT 0")
-    if "sections_json" not in columns:
-        cursor.execute("ALTER TABLE quizzes ADD COLUMN sections_json TEXT DEFAULT '[]'")
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS schedules (
-            quiz_id TEXT PRIMARY KEY,
-            scheduled_timestamp REAL NOT NULL,
-            time_str TEXT NOT NULL
-        )
-    """)
-    conn.commit()
-    conn.close()
+    # MongoDB mein table initialize karne ki zaroorat nahi hoti
+    pass
 
 def generate_quiz_id():
     # ID format: GG + 7 alphanumeric characters
@@ -49,103 +37,76 @@ def save_quiz(name: str, timer: int, questions: list, creator_name: str = "MAHI 
     if sections is None:
         sections = []
     quiz_id = generate_quiz_id()
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO quizzes (quiz_id, name, timer, questions_json, creator_name, sections_enabled, sections_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (quiz_id, name, timer, json.dumps(questions, ensure_ascii=False), creator_name, sections_enabled, json.dumps(sections, ensure_ascii=False)))
-    conn.commit()
-    conn.close()
+    doc = {
+        "quiz_id": quiz_id,
+        "name": name,
+        "timer": timer,
+        "questions": questions,
+        "creator_name": creator_name,
+        "sections_enabled": sections_enabled,
+        "sections": sections
+    }
+    if quizzes_col is not None:
+        quizzes_col.insert_one(doc)
     return quiz_id
 
 def get_quiz(quiz_id: str):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT quiz_id, name, timer, questions_json, created_at, creator_name, sections_enabled, sections_json
-        FROM quizzes WHERE quiz_id = ?
-    """, (quiz_id,))
-    row = cursor.fetchone()
-    conn.close()
-    if row:
-        sec_enabled = row[6] if len(row) > 6 and row[6] is not None else 0
-        sec_list = json.loads(row[7]) if len(row) > 7 and row[7] is not None else []
-        return {
-            "quiz_id": row[0],
-            "name": row[1],
-            "timer": row[2],
-            "questions": json.loads(row[3]),
-            "created_at": row[4],
-            "creator_name": row[5],
-            "sections_enabled": sec_enabled,
-            "sections": sec_list
-        }
+    if quizzes_col is not None:
+        doc = quizzes_col.find_one({"quiz_id": quiz_id})
+        if doc:
+            return {
+                "quiz_id": doc.get("quiz_id"),
+                "name": doc.get("name"),
+                "timer": doc.get("timer"),
+                "questions": doc.get("questions", []),
+                "created_at": str(doc.get("_id").generation_time) if "_id" in doc else "",
+                "creator_name": doc.get("creator_name", "MAHI 💗"),
+                "sections_enabled": doc.get("sections_enabled", 0),
+                "sections": doc.get("sections", [])
+            }
     return None
 
 def save_schedule(quiz_id: str, scheduled_timestamp: float, time_str: str):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT OR REPLACE INTO schedules (quiz_id, scheduled_timestamp, time_str)
-        VALUES (?, ?, ?)
-    """, (quiz_id, scheduled_timestamp, time_str))
-    conn.commit()
-    conn.close()
+    if schedules_col is not None:
+        schedules_col.update_one(
+            {"quiz_id": quiz_id},
+            {"$set": {"quiz_id": quiz_id, "scheduled_timestamp": scheduled_timestamp, "time_str": time_str}},
+            upsert=True
+        )
 
 def get_active_schedules():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT quiz_id, scheduled_timestamp, time_str FROM schedules")
-    rows = cursor.fetchall()
-    conn.close()
-    return [
-        {
-            "quiz_id": r[0],
-            "scheduled_timestamp": r[1],
-            "time_str": r[2]
-        }
-        for r in rows
-    ]
+    if schedules_col is not None:
+        docs = schedules_col.find()
+        return [
+            {
+                "quiz_id": d.get("quiz_id"),
+                "scheduled_timestamp": d.get("scheduled_timestamp"),
+                "time_str": d.get("time_str")
+            }
+            for d in docs
+        ]
+    return []
 
 def delete_schedule(quiz_id: str):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM schedules WHERE quiz_id = ?", (quiz_id,))
-    conn.commit()
-    conn.close()
+    if schedules_col is not None:
+        schedules_col.delete_one({"quiz_id": quiz_id})
 
 def update_quiz_name(quiz_id: str, new_name: str):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE quizzes SET name = ? WHERE quiz_id = ?", (new_name, quiz_id))
-    conn.commit()
-    conn.close()
+    if quizzes_col is not None:
+        quizzes_col.update_one({"quiz_id": quiz_id}, {"$set": {"name": new_name}})
 
 def update_quiz_timer(quiz_id: str, new_timer: int):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE quizzes SET timer = ? WHERE quiz_id = ?", (new_timer, quiz_id))
-    conn.commit()
-    conn.close()
+    if quizzes_col is not None:
+        quizzes_col.update_one({"quiz_id": quiz_id}, {"$set": {"timer": new_timer}})
 
 def update_quiz_questions(quiz_id: str, questions: list):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE quizzes SET questions_json = ? WHERE quiz_id = ?", (json.dumps(questions, ensure_ascii=False), quiz_id))
-    conn.commit()
-    conn.close()
+    if quizzes_col is not None:
+        quizzes_col.update_one({"quiz_id": quiz_id}, {"$set": {"questions": questions}})
 
 def update_quiz_sections_enabled(quiz_id: str, enabled: int):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE quizzes SET sections_enabled = ? WHERE quiz_id = ?", (enabled, quiz_id))
-    conn.commit()
-    conn.close()
+    if quizzes_col is not None:
+        quizzes_col.update_one({"quiz_id": quiz_id}, {"$set": {"sections_enabled": enabled}})
 
 def update_quiz_sections(quiz_id: str, sections: list):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE quizzes SET sections_json = ? WHERE quiz_id = ?", (json.dumps(sections, ensure_ascii=False), quiz_id))
-    conn.commit()
-    conn.close()
+    if quizzes_col is not None:
+        quizzes_col.update_one({"quiz_id": quiz_id}, {"$set": {"sections": sections}})
