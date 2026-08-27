@@ -2,6 +2,7 @@ import os
 import json
 import random
 import string
+from datetime import datetime
 from pymongo import MongoClient
 
 # Railway se MONGODB_URI read karein
@@ -15,8 +16,13 @@ schedules_col = None
 if MONGO_URI:
     try:
         client = MongoClient(MONGO_URI)
-        # Default Database connect karein ya 'quiz_bot_db' use karein
-        db = client.get_database() if client.get_default_database() is not None else client["quiz_bot_db"]
+        try:
+            db = client.get_default_database()
+            if db is None:
+                db = client["quiz_bot_db"]
+        except Exception:
+            db = client["quiz_bot_db"]
+            
         quizzes_col = db["quizzes"]
         schedules_col = db["schedules"]
         print("✅ Successfully connected to MongoDB!")
@@ -24,11 +30,9 @@ if MONGO_URI:
         print(f"❌ MongoDB Connection Error: {e}")
 
 def init_db():
-    # MongoDB mein table initialize karne ki zaroorat nahi hoti
     pass
 
 def generate_quiz_id():
-    # ID format: GG + 7 alphanumeric characters
     chars = string.ascii_uppercase + string.digits
     random_str = ''.join(random.choices(chars, k=7))
     return f"GG{random_str}"
@@ -37,11 +41,13 @@ def save_quiz(name: str, timer: int, questions: list, creator_name: str = "MAHI 
     if sections is None:
         sections = []
     quiz_id = generate_quiz_id()
+    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     doc = {
         "quiz_id": quiz_id,
         "name": name,
         "timer": timer,
         "questions": questions,
+        "created_at": created_at,
         "creator_name": creator_name,
         "sections_enabled": sections_enabled,
         "sections": sections
@@ -59,7 +65,7 @@ def get_quiz(quiz_id: str):
                 "name": doc.get("name"),
                 "timer": doc.get("timer"),
                 "questions": doc.get("questions", []),
-                "created_at": str(doc.get("_id").generation_time) if "_id" in doc else "",
+                "created_at": doc.get("created_at", ""),
                 "creator_name": doc.get("creator_name", "MAHI 💗"),
                 "sections_enabled": doc.get("sections_enabled", 0),
                 "sections": doc.get("sections", [])
