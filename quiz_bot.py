@@ -15,7 +15,9 @@ from telegram import (
     KeyboardButtonRequestChat,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
-    Poll
+    Poll,
+    InlineQueryResultArticle,
+    InputTextMessageContent
 )
 from telegram.request import HTTPXRequest
 from telegram.ext import (
@@ -24,6 +26,7 @@ from telegram.ext import (
     MessageHandler,
     CallbackQueryHandler,
     PollAnswerHandler,
+    InlineQueryHandler,
     ContextTypes,
     filters
 )
@@ -991,6 +994,79 @@ async def handle_private_message(update: Update, context: ContextTypes.DEFAULT_T
         return
 
 
+async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query_text = update.inline_query.query.strip()
+    results = []
+
+    bot_obj = context.bot
+    try:
+        bot_username = bot_obj.username if getattr(bot_obj, "username", None) else (await bot_obj.get_me()).username
+    except Exception:
+        bot_username = ""
+
+    quizzes_to_show = []
+    if query_text:
+        # If query matches exact quiz_id
+        quiz_data = db.get_quiz(query_text)
+        if quiz_data:
+            quizzes_to_show.append(quiz_data)
+        else:
+            # Search quizzes by name or ID
+            all_quizzes = db.get_quizzes_by_user(0, limit=20)
+            for q in all_quizzes:
+                if query_text.lower() in q.get("name", "").lower() or query_text.lower() in q.get("quiz_id", "").lower():
+                    quizzes_to_show.append(q)
+    else:
+        # Show user's quizzes or latest public quizzes
+        user = update.effective_user
+        user_id = user.id if user else 0
+        quizzes_to_show = db.get_quizzes_by_user(user_id, limit=20)
+
+    for q in quizzes_to_show:
+        q_id = q.get("quiz_id")
+        q_name = q.get("name", "Quiz")
+        q_count = len(q.get("questions", []))
+        q_timer = q.get("timer", 15)
+
+        msg_content = (
+            f"via @{bot_username}\n"
+            f"📖 **Quiz Name:** {q_name}\n"
+            f"#️⃣ **Questions:** {q_count}\n"
+            f"⏰ **Timer:** {q_timer}s\n"
+            f"🆔 **Quiz ID:** `{q_id}`\n"
+            f"✖️ **-ve:** 0\n"
+            f"💰 **Type:** free"
+        )
+
+        start_url = f"https://t.me/{bot_username}?start=quiz_{q_id}" if bot_username else f"https://t.me/?start=quiz_{q_id}"
+        group_url = f"https://t.me/{bot_username}?startgroup=quiz_{q_id}" if bot_username else f"https://t.me/?startgroup=quiz_{q_id}"
+
+        keyboard = [
+            [
+                InlineKeyboardButton("🎯 Start", url=start_url)
+            ],
+            [
+                InlineKeyboardButton("🚀 Group", url=group_url)
+            ],
+            [
+                InlineKeyboardButton("🔗 Share", switch_inline_query=q_id)
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        results.append(
+            InlineQueryResultArticle(
+                id=q_id,
+                title=f"Quiz: {q_name}",
+                description=f"{q_count} questions | Timer: {q_timer}s",
+                input_message_content=InputTextMessageContent(msg_content, parse_mode="Markdown"),
+                reply_markup=reply_markup
+            )
+        )
+
+    await update.inline_query.answer(results, cache_time=5)
+
+
 async def send_quiz_created_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, quiz_data: dict):
     quiz_id = quiz_data["quiz_id"]
     name = quiz_data["name"]
@@ -1030,7 +1106,7 @@ async def send_quiz_created_screen(update: Update, context: ContextTypes.DEFAULT
             InlineKeyboardButton("🚀 Group", url=group_url)
         ],
         [
-            InlineKeyboardButton("🔗 Share", callback_data=f"share_{quiz_id}")
+            InlineKeyboardButton("🔗 Share", switch_inline_query=quiz_id)
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -2074,6 +2150,7 @@ def main():
     app.add_handler(CommandHandler("slow", slow_command))
     app.add_handler(CommandHandler("edit", edit_command))
     app.add_handler(CommandHandler("done_edit", done_edit_command))
+    app.add_handler(InlineQueryHandler(inline_query_handler))
     app.add_handler(CallbackQueryHandler(handle_callback_query))
     app.add_handler(PollAnswerHandler(handle_poll_answer))
     app.add_handler(MessageHandler(filters.StatusUpdate.CHAT_SHARED, chat_shared_handler))
@@ -2084,7 +2161,7 @@ def main():
     print(f"🚀 Telegram Quiz Bot starting... (OWNER_ID={config.OWNER_ID}, GROUP_ID={config.GROUP_ID})", flush=True)
     app.run_polling(
         drop_pending_updates=True,
-        allowed_updates=["message", "callback_query", "poll_answer"]
+        allowed_updates=["message", "callback_query", "poll_answer", "inline_query"]
     )
 
 
