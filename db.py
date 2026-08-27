@@ -3,10 +3,15 @@ import json
 import random
 import string
 from datetime import datetime
-from pymongo import MongoClient
+from dotenv import load_dotenv
 
-# Railway se MONGODB_URI read karein
-MONGO_URI = os.getenv("MONGODB_URI") or os.getenv("MONGO_URI")
+load_dotenv()
+
+# Memory backup so bot NEVER crashes if DB has temporary delay
+_memory_quizzes = {}
+_memory_schedules = {}
+
+MONGO_URI = os.getenv("MONGODB_URI") or os.getenv("MONGO_URI") or os.getenv("DATABASE_URL")
 
 client = None
 db = None
@@ -15,7 +20,8 @@ schedules_col = None
 
 if MONGO_URI:
     try:
-        client = MongoClient(MONGO_URI)
+        from pymongo import MongoClient
+        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
         try:
             db = client.get_default_database()
             if db is None:
@@ -25,9 +31,9 @@ if MONGO_URI:
             
         quizzes_col = db["quizzes"]
         schedules_col = db["schedules"]
-        print("✅ Successfully connected to MongoDB!")
+        print(f"✅ Successfully connected to MongoDB Database: {db.name}")
     except Exception as e:
-        print(f"❌ MongoDB Connection Error: {e}")
+        print(f"❌ MongoDB Connection Error in database.py: {e}")
 
 def init_db():
     pass
@@ -52,67 +58,124 @@ def save_quiz(name: str, timer: int, questions: list, creator_name: str = "MAHI 
         "sections_enabled": sections_enabled,
         "sections": sections
     }
+    
+    # Save in memory cache immediately
+    _memory_quizzes[quiz_id] = doc
+    
+    # Save in MongoDB
     if quizzes_col is not None:
-        quizzes_col.insert_one(doc)
+        try:
+            quizzes_col.insert_one(doc)
+            print(f"✅ Quiz {quiz_id} saved to MongoDB successfully!")
+        except Exception as e:
+            print(f"❌ Failed to insert quiz into MongoDB: {e}")
+            
     return quiz_id
 
 def get_quiz(quiz_id: str):
     if quizzes_col is not None:
-        doc = quizzes_col.find_one({"quiz_id": quiz_id})
-        if doc:
-            return {
-                "quiz_id": doc.get("quiz_id"),
-                "name": doc.get("name"),
-                "timer": doc.get("timer"),
-                "questions": doc.get("questions", []),
-                "created_at": doc.get("created_at", ""),
-                "creator_name": doc.get("creator_name", "MAHI 💗"),
-                "sections_enabled": doc.get("sections_enabled", 0),
-                "sections": doc.get("sections", [])
-            }
-    return None
+        try:
+            doc = quizzes_col.find_one({"quiz_id": quiz_id})
+            if doc:
+                return {
+                    "quiz_id": doc.get("quiz_id"),
+                    "name": doc.get("name"),
+                    "timer": doc.get("timer"),
+                    "questions": doc.get("questions", []),
+                    "created_at": doc.get("created_at", ""),
+                    "creator_name": doc.get("creator_name", "MAHI 💗"),
+                    "sections_enabled": doc.get("sections_enabled", 0),
+                    "sections": doc.get("sections", [])
+                }
+        except Exception as e:
+            print(f"❌ Error fetching quiz from MongoDB: {e}")
+            
+    # Fallback to memory so get_quiz NEVER returns None
+    return _memory_quizzes.get(quiz_id)
 
 def save_schedule(quiz_id: str, scheduled_timestamp: float, time_str: str):
+    _memory_schedules[quiz_id] = {
+        "quiz_id": quiz_id,
+        "scheduled_timestamp": scheduled_timestamp,
+        "time_str": time_str
+    }
     if schedules_col is not None:
-        schedules_col.update_one(
-            {"quiz_id": quiz_id},
-            {"$set": {"quiz_id": quiz_id, "scheduled_timestamp": scheduled_timestamp, "time_str": time_str}},
-            upsert=True
-        )
+        try:
+            schedules_col.update_one(
+                {"quiz_id": quiz_id},
+                {"$set": {"quiz_id": quiz_id, "scheduled_timestamp": scheduled_timestamp, "time_str": time_str}},
+                upsert=True
+            )
+        except Exception as e:
+            print(f"❌ Error saving schedule to MongoDB: {e}")
 
 def get_active_schedules():
     if schedules_col is not None:
-        docs = schedules_col.find()
-        return [
-            {
-                "quiz_id": d.get("quiz_id"),
-                "scheduled_timestamp": d.get("scheduled_timestamp"),
-                "time_str": d.get("time_str")
-            }
-            for d in docs
-        ]
-    return []
+        try:
+            docs = list(schedules_col.find())
+            if docs:
+                return [
+                    {
+                        "quiz_id": d.get("quiz_id"),
+                        "scheduled_timestamp": d.get("scheduled_timestamp"),
+                        "time_str": d.get("time_str")
+                    }
+                    for d in docs
+                ]
+        except Exception as e:
+            print(f"❌ Error getting schedules from MongoDB: {e}")
+            
+    return list(_memory_schedules.values())
 
 def delete_schedule(quiz_id: str):
+    _memory_schedules.pop(quiz_id, None)
     if schedules_col is not None:
-        schedules_col.delete_one({"quiz_id": quiz_id})
+        try:
+            schedules_col.delete_one({"quiz_id": quiz_id})
+        except Exception as e:
+            print(f"❌ Error deleting schedule from MongoDB: {e}")
 
 def update_quiz_name(quiz_id: str, new_name: str):
+    if quiz_id in _memory_quizzes:
+        _memory_quizzes[quiz_id]["name"] = new_name
     if quizzes_col is not None:
-        quizzes_col.update_one({"quiz_id": quiz_id}, {"$set": {"name": new_name}})
+        try:
+            quizzes_col.update_one({"quiz_id": quiz_id}, {"$set": {"name": new_name}})
+        except Exception as e:
+            print(f"❌ Error updating quiz name in MongoDB: {e}")
 
 def update_quiz_timer(quiz_id: str, new_timer: int):
+    if quiz_id in _memory_quizzes:
+        _memory_quizzes[quiz_id]["timer"] = new_timer
     if quizzes_col is not None:
-        quizzes_col.update_one({"quiz_id": quiz_id}, {"$set": {"timer": new_timer}})
+        try:
+            quizzes_col.update_one({"quiz_id": quiz_id}, {"$set": {"timer": new_timer}})
+        except Exception as e:
+            print(f"❌ Error updating quiz timer in MongoDB: {e}")
 
 def update_quiz_questions(quiz_id: str, questions: list):
+    if quiz_id in _memory_quizzes:
+        _memory_quizzes[quiz_id]["questions"] = questions
     if quizzes_col is not None:
-        quizzes_col.update_one({"quiz_id": quiz_id}, {"$set": {"questions": questions}})
+        try:
+            quizzes_col.update_one({"quiz_id": quiz_id}, {"$set": {"questions": questions}})
+        except Exception as e:
+            print(f"❌ Error updating quiz questions in MongoDB: {e}")
 
 def update_quiz_sections_enabled(quiz_id: str, enabled: int):
+    if quiz_id in _memory_quizzes:
+        _memory_quizzes[quiz_id]["sections_enabled"] = enabled
     if quizzes_col is not None:
-        quizzes_col.update_one({"quiz_id": quiz_id}, {"$set": {"sections_enabled": enabled}})
+        try:
+            quizzes_col.update_one({"quiz_id": quiz_id}, {"$set": {"sections_enabled": enabled}})
+        except Exception as e:
+            print(f"❌ Error updating sections_enabled in MongoDB: {e}")
 
 def update_quiz_sections(quiz_id: str, sections: list):
+    if quiz_id in _memory_quizzes:
+        _memory_quizzes[quiz_id]["sections"] = sections
     if quizzes_col is not None:
-        quizzes_col.update_one({"quiz_id": quiz_id}, {"$set": {"sections": sections}})
+        try:
+            quizzes_col.update_one({"quiz_id": quiz_id}, {"$set": {"sections": sections}})
+        except Exception as e:
+            print(f"❌ Error updating sections in MongoDB: {e}")
