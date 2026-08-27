@@ -106,6 +106,28 @@ def is_owner(user_id: int) -> bool:
     return user_id == config.OWNER_ID
 
 
+async def is_admin_or_owner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    user = update.effective_user
+    chat = update.effective_chat
+    if not user or not chat:
+        return False
+
+    if is_owner(user.id):
+        return True
+
+    if chat.type == "private":
+        return True
+
+    try:
+        member = await context.bot.get_chat_member(chat.id, user.id)
+        if member.status in ["administrator", "creator"]:
+            return True
+    except Exception as e:
+        logger.error(f"Error checking chat member status for user_id={user.id} in chat_id={chat.id}: {e}")
+
+    return False
+
+
 def is_authorized_group(chat_id: int) -> bool:
     return True
 
@@ -165,6 +187,10 @@ async def pause_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user:
         return
 
+    if not await is_admin_or_owner(update, context):
+        await update.message.reply_text("❌ Only Group Admins or Bot Owner can use this command!")
+        return
+
     if not active_quizzes:
         await update.message.reply_text("❌ No active quiz running to pause.")
         return
@@ -189,6 +215,10 @@ async def resume_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
     if not user:
+        return
+
+    if not await is_admin_or_owner(update, context):
+        await update.message.reply_text("❌ Only Group Admins or Bot Owner can use this command!")
         return
 
     if not active_quizzes:
@@ -217,6 +247,10 @@ async def stop_command_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user:
         return
 
+    if not await is_admin_or_owner(update, context):
+        await update.message.reply_text("❌ Only Group Admins or Bot Owner can use this command!")
+        return
+
     if not active_quizzes:
         await update.message.reply_text("❌ No active quiz running to stop.")
         return
@@ -241,6 +275,10 @@ async def fast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
     if not user:
+        return
+
+    if not await is_admin_or_owner(update, context):
+        await update.message.reply_text("❌ Only Group Admins or Bot Owner can use this command!")
         return
 
     if not active_quizzes:
@@ -279,6 +317,10 @@ async def slow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
     if not user:
+        return
+
+    if not await is_admin_or_owner(update, context):
+        await update.message.reply_text("❌ Only Group Admins or Bot Owner can use this command!")
         return
 
     if not active_quizzes:
@@ -321,6 +363,10 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
     if not user:
+        return
+
+    if not await is_admin_or_owner(update, context):
+        await update.message.reply_text("❌ Only Group Admins or Bot Owner can use this command!")
         return
 
     args = context.args
@@ -409,6 +455,10 @@ async def schedules_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def unschedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user:
+        return
+
+    if not await is_admin_or_owner(update, context):
+        await update.message.reply_text("❌ Only Group Admins or Bot Owner can use this command!")
         return
 
     args = context.args
