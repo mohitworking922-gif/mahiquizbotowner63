@@ -1028,14 +1028,19 @@ async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         q_count = len(q.get("questions", []))
         q_timer = q.get("timer", 15)
 
+        # Use HTML parse mode with proper escaping to avoid Markdown entity errors
+        safe_q_name = html.escape(str(q_name))
+        safe_q_id = html.escape(str(q_id))
+        safe_bot_username = html.escape(str(bot_username)) if bot_username else ""
+
         msg_content = (
-            f"via @{bot_username}\n"
-            f"📖 **Quiz Name:** {q_name}\n"
-            f"#️⃣ **Questions:** {q_count}\n"
-            f"⏰ **Timer:** {q_timer}s\n"
-            f"🆔 **Quiz ID:** `{q_id}`\n"
-            f"✖️ **-ve:** 0\n"
-            f"💰 **Type:** free"
+            f"via @{safe_bot_username}\n"
+            f"📖 <b>Quiz Name:</b> {safe_q_name}\n"
+            f"#️⃣ <b>Questions:</b> {q_count}\n"
+            f"⏰ <b>Timer:</b> {q_timer}s\n"
+            f"🆔 <b>Quiz ID:</b> <code>{safe_q_id}</code>\n"
+            f"✖️ <b>-ve:</b> 0\n"
+            f"💰 <b>Type:</b> free"
         )
 
         start_url = f"https://t.me/{bot_username}?start=quiz_{q_id}" if bot_username else f"https://t.me/?start=quiz_{q_id}"
@@ -1059,7 +1064,7 @@ async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 id=q_id,
                 title=f"Quiz: {q_name}",
                 description=f"{q_count} questions | Timer: {q_timer}s",
-                input_message_content=InputTextMessageContent(msg_content, parse_mode="Markdown"),
+                input_message_content=InputTextMessageContent(msg_content, parse_mode="HTML"),
                 reply_markup=reply_markup
             )
         )
