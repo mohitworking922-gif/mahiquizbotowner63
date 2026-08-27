@@ -104,10 +104,7 @@ def is_owner(user_id: int) -> bool:
 
 
 def is_authorized_group(chat_id: int) -> bool:
-    if not config.GROUP_ID or config.GROUP_ID == 0:
-        logger.error("GROUP_ID is not configured or set to 0. Group authorization failed.")
-        return False
-    return chat_id == config.GROUP_ID
+    return True
 
 
 def format_time(seconds: float) -> str:
@@ -162,7 +159,7 @@ except Exception as _tz_err:
 async def pause_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
-    if not user or not is_owner(user.id):
+    if not user:
         return
 
     if not active_quizzes:
@@ -188,7 +185,7 @@ async def pause_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def resume_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
-    if not user or not is_owner(user.id):
+    if not user:
         return
 
     if not active_quizzes:
@@ -214,7 +211,7 @@ async def resume_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def stop_command_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
-    if not user or not is_owner(user.id):
+    if not user:
         return
 
     if not active_quizzes:
@@ -229,7 +226,7 @@ async def stop_command_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         session["stopped"] = True
         stopped_count += 1
         try:
-            await context.bot.send_message(chat_id=target_group, text="⏹️ Quiz Stopped by Owner!")
+            await context.bot.send_message(chat_id=target_group, text="⏹️ Quiz Stopped!")
         except Exception as e:
             logger.error(f"Failed to send stop notice to group {target_group}: {e}")
 
@@ -240,7 +237,7 @@ async def stop_command_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def fast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
-    if not user or not is_owner(user.id):
+    if not user:
         return
 
     if not active_quizzes:
@@ -278,7 +275,7 @@ async def fast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def slow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
-    if not user or not is_owner(user.id):
+    if not user:
         return
 
     if not active_quizzes:
@@ -319,7 +316,8 @@ async def slow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if not user or not is_owner(user.id):
+    chat = update.effective_chat
+    if not user:
         return
 
     args = context.args
@@ -345,6 +343,8 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Invalid time format. Use HH:MM in 24-hour format (e.g., 09:00 or 21:30).")
         return
 
+    target_group = chat.id if chat.type != "private" else config.GROUP_ID
+
     now = datetime.datetime.now(IST_TZ)
     scheduled_dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
@@ -352,7 +352,7 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         scheduled_dt += datetime.timedelta(days=1)
 
     epoch_timestamp = scheduled_dt.timestamp()
-    db.save_schedule(quiz_id, epoch_timestamp, time_str)
+    db.save_schedule(quiz_id, epoch_timestamp, time_str, group_id=target_group)
 
     time_am_pm = scheduled_dt.strftime("%I:%M %p")
     day_month = scheduled_dt.strftime("%d %b")
@@ -371,15 +371,18 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     try:
-        await context.bot.send_message(chat_id=config.GROUP_ID, text=announcement)
-        await update.message.reply_text(f"✅ Quiz scheduled successfully and announcement posted in group!")
+        if target_group != 0:
+            await context.bot.send_message(chat_id=target_group, text=announcement)
+            await update.message.reply_text(f"✅ Quiz scheduled successfully and announcement posted in group!")
+        else:
+            await update.message.reply_text(f"✅ Quiz scheduled in DB for {time_am_pm}!")
     except Exception as e:
-        await update.message.reply_text(f"✅ Quiz scheduled in DB, but failed to post to group: {e}")
+        await update.message.reply_text(f"✅ Quiz scheduled in DB, but failed to post announcement: {e}")
 
 
 async def schedules_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if not user or not is_owner(user.id):
+    if not user:
         return
 
     schedules = db.get_active_schedules()
@@ -402,7 +405,7 @@ async def schedules_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def unschedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if not user or not is_owner(user.id):
+    if not user:
         return
 
     args = context.args
@@ -433,8 +436,9 @@ async def scheduler_loop(application):
                         print(f"⏰ Triggering scheduled quiz: {quiz_id}", flush=True)
                         await asyncio.to_thread(db.delete_schedule, quiz_id)
                         quiz_data = await asyncio.to_thread(db.get_quiz, quiz_id)
-                        if quiz_data and config.GROUP_ID != 0:
-                            asyncio.create_task(run_quiz_session(application.bot, config.GROUP_ID, quiz_data))
+                        target_group = s.get("group_id") or config.GROUP_ID
+                        if quiz_data and target_group != 0:
+                            asyncio.create_task(run_quiz_session(application.bot, target_group, quiz_data))
             except Exception as e:
                 print(f"[ERROR] Exception in scheduler_loop: {e}", flush=True)
             await asyncio.sleep(10)
@@ -462,11 +466,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Quiz not found!")
             return
 
-        if not is_owner(user.id):
-            return
-
         if chat.type != "private":
-            logger.info(f"Triggering Quiz {quiz_id} via startgroup link in group chat_id={chat.id}")
+            logger.info(f"Triggering Quiz {quiz_id} via start link in group chat_id={chat.id}")
             await update.message.reply_text(f"🚀 Quiz '{quiz_data['name']}' starting in this group ({chat.id})!")
             asyncio.create_task(run_quiz_session(context.bot, chat.id, quiz_data, update.message))
             return
@@ -475,17 +476,17 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if chat.type != "private":
-        if not is_authorized_group(chat.id):
-            await update.message.reply_text("❌ यह Quiz Bot केवल authorized group के लिए है।")
-            return
-        await update.message.reply_text("👋 Hello! Use this bot in private chat to create quizzes.")
+        await update.message.reply_text(
+            "👋 **Welcome to Quiz Bot!**\n\n"
+            "• Private chat me mujhe /start karke apna Naya Quiz banayein.\n"
+            "• Group me kisi quiz ko chalane ke liye command format try karein: `/start quiz_ID`\n"
+            "• Aapke banaye quizzes ki list ke liye: `/myquizzes`\n"
+            "• Help ke liye: `/help`",
+            parse_mode="Markdown"
+        )
         return
 
-    # Security check for private chat creation - Silent ignore if not owner
-    if not is_owner(user.id):
-        return
-
-    # Start new quiz creation flow
+    # Start new quiz creation flow for any user in private chat
     user_states[user.id] = {
         "step": "WAITING_NAME",
         "name": "",
@@ -516,7 +517,7 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def done_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if not user or not is_owner(user.id):
+    if not user:
         return
 
     state = user_states.get(user.id)
@@ -538,9 +539,6 @@ async def handle_private_document(update: Update, context: ContextTypes.DEFAULT_
     chat = update.effective_chat
     
     if not user or chat.type != "private":
-        return
-
-    if not is_owner(user.id):
         return
 
     state = user_states.get(user.id)
@@ -607,9 +605,6 @@ async def handle_private_photo(update: Update, context: ContextTypes.DEFAULT_TYP
     if not user or chat.type != "private":
         return
 
-    if not is_owner(user.id):
-        return
-
     state = user_states.get(user.id)
     if not state:
         await update.message.reply_text("Send /start to create a new Quiz or /edit to edit one.")
@@ -669,9 +664,6 @@ async def handle_private_message(update: Update, context: ContextTypes.DEFAULT_T
     chat = update.effective_chat
     
     if not user or chat.type != "private":
-        return
-
-    if not is_owner(user.id):
         return
 
     state = user_states.get(user.id)
@@ -1152,9 +1144,52 @@ async def send_section_manager_screen(update: Update, context: ContextTypes.DEFA
         await update.message.reply_text(msg_text, reply_markup=reply_markup)
 
 
+async def myquizzes_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not user:
+        return
+    quizzes = db.get_quizzes_by_user(user.id)
+    if not quizzes:
+        await update.message.reply_text("ℹ️ Aapne abhi tak koi Quiz nahi banaya hai. Naya quiz banane ke liye /start bhejein!")
+        return
+
+    lines = ["📚 **Aapke Banaye Hue Quizzes:**\n"]
+    for q in quizzes:
+        q_id = q.get("quiz_id")
+        name = q.get("name", "Quiz")
+        count = len(q.get("questions", []))
+        lines.append(f"• **{name}** (ID: `{q_id}`) - {count} Questions\n  Edit: `/edit {q_id}` | Start: `/start quiz_{q_id}`")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = (
+        "🤖 **Quiz Bot Help & Commands Guide**\n\n"
+        "✨ **Quiz Banao (Private Chat):**\n"
+        "• `/start` - Naya Quiz create karne ke liye.\n"
+        "• `.txt file` send karein - Direct questions import karne ke liye.\n"
+        "• `/done` - Quiz creation finish karne ke liye.\n\n"
+        "🎯 **Quiz Group Me Play Karo:**\n"
+        "• `/start quiz_ID` - Group me directly quiz start karein.\n"
+        "• Button **'🎯 Select Group for Quiz'** se Group choose karke launch karein.\n\n"
+        "⚙️ **Group Quiz Control Commands:**\n"
+        "• `/pause` - Running quiz pause karein.\n"
+        "• `/resume` - Paused quiz resume karein.\n"
+        "• `/stop` - Running quiz stop karein.\n"
+        "• `/fast` - Question timer speed badhayein.\n"
+        "• `/slow` - Question timer speed kam karein.\n\n"
+        "📋 **Manage Quizzes:**\n"
+        "• `/myquizzes` - Aapke banaye saare quizzes dekhein.\n"
+        "• `/edit <quiz_id>` - Quiz edit karein.\n"
+        "• `/schedule <quiz_id> HH:MM` - Quiz schedule karein."
+    )
+    await update.message.reply_text(help_text, parse_mode="Markdown")
+
+
 async def edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if not user or not is_owner(user.id):
+    if not user:
         return
 
     args = context.args
@@ -1173,7 +1208,7 @@ async def edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def done_edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if not user or not is_owner(user.id):
+    if not user:
         return
 
     state = user_states.get(user.id)
@@ -1206,9 +1241,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     user = query.from_user
     logger.info(f"Callback received: {query.data} from user_id={user.id}")
 
-    if not is_owner(user.id):
-        return
-
     data = query.data
 
     if data == "create_sec_no":
@@ -1220,7 +1252,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         timer_val = state.get("timer", 15)
         creator_name = user.first_name + (f" {user.last_name}" if user.last_name else "")
 
-        quiz_id = db.save_quiz(name, timer_val, questions, creator_name=creator_name, sections_enabled=0, sections=[])
+        quiz_id = db.save_quiz(name, timer_val, questions, creator_name=creator_name, sections_enabled=0, sections=[], creator_id=user.id)
         del user_states[user.id]
 
         quiz_data = db.get_quiz(quiz_id)
@@ -1245,7 +1277,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         temp_sections = state.get("temp_sections", [])
         creator_name = user.first_name + (f" {user.last_name}" if user.last_name else "")
 
-        quiz_id = db.save_quiz(name, timer_val, questions, creator_name=creator_name, sections_enabled=1, sections=temp_sections)
+        quiz_id = db.save_quiz(name, timer_val, questions, creator_name=creator_name, sections_enabled=1, sections=temp_sections, creator_id=user.id)
         del user_states[user.id]
 
         quiz_data = db.get_quiz(quiz_id)
@@ -1264,7 +1296,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         share_link = f"https://t.me/{bot_username}?start=quiz_{quiz_id}"
         await query.message.reply_text(
             f"🔗 Share link for Quiz ({quiz_id}):\n{share_link}\n\n"
-            f"Note: This Quiz will execute ONLY in the authorized group."
+            f"Note: Share this link in any group to launch this quiz!"
         )
         return
 
@@ -1274,10 +1306,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
         if not quiz_data:
             await query.message.reply_text("❌ Quiz not found.")
-            return
-
-        if not is_owner(user.id):
-            await query.message.reply_text("❌ Access Denied: Sirf Owner hi group me quiz launch kar sakta hai.")
             return
 
         user_states[user.id] = {
@@ -1440,7 +1468,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def chat_shared_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if not user or not is_owner(user.id):
+    if not user:
         return
 
     chat_shared = update.message.chat_shared
@@ -2032,6 +2060,8 @@ def main():
 
     # Handlers
     app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("myquizzes", myquizzes_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CommandHandler("done", done_command))
     app.add_handler(CommandHandler("schedule", schedule_command))

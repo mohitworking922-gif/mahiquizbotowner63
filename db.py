@@ -67,7 +67,7 @@ def generate_quiz_id():
     random_str = ''.join(random.choices(chars, k=7))
     return f"GG{random_str}"
 
-def save_quiz(name: str, timer: int, questions: list, creator_name: str = "MAHI 💗", sections_enabled: int = 0, sections: list = None) -> str:
+def save_quiz(name: str, timer: int, questions: list, creator_name: str = "MAHI 💗", sections_enabled: int = 0, sections: list = None, creator_id: int = 0) -> str:
     if sections is None:
         sections = []
     quiz_id = generate_quiz_id()
@@ -79,6 +79,7 @@ def save_quiz(name: str, timer: int, questions: list, creator_name: str = "MAHI 
         "questions": questions,
         "created_at": created_at,
         "creator_name": creator_name,
+        "creator_id": creator_id,
         "sections_enabled": sections_enabled,
         "sections": sections
     }
@@ -108,6 +109,7 @@ def get_quiz(quiz_id: str):
                     "questions": doc.get("questions", []),
                     "created_at": doc.get("created_at", ""),
                     "creator_name": doc.get("creator_name", "MAHI 💗"),
+                    "creator_id": doc.get("creator_id", 0),
                     "sections_enabled": doc.get("sections_enabled", 0),
                     "sections": doc.get("sections", [])
                 }
@@ -117,17 +119,51 @@ def get_quiz(quiz_id: str):
     # Fallback to memory so get_quiz NEVER returns None
     return _memory_quizzes.get(quiz_id)
 
-def save_schedule(quiz_id: str, scheduled_timestamp: float, time_str: str):
+def get_quizzes_by_user(user_id: int = 0, limit: int = 20):
+    results = []
+    if quizzes_col is not None:
+        try:
+            query = {}
+            if user_id > 0:
+                query = {"$or": [{"creator_id": user_id}, {"creator_id": {"$exists": False}}]}
+            docs = list(quizzes_col.find(query).sort("_id", -1).limit(limit))
+            for doc in docs:
+                results.append({
+                    "quiz_id": doc.get("quiz_id"),
+                    "name": doc.get("name"),
+                    "timer": doc.get("timer"),
+                    "questions": doc.get("questions", []),
+                    "created_at": doc.get("created_at", ""),
+                    "creator_name": doc.get("creator_name", ""),
+                    "creator_id": doc.get("creator_id", 0),
+                    "sections_enabled": doc.get("sections_enabled", 0),
+                    "sections": doc.get("sections", [])
+                })
+            if results:
+                return results
+        except Exception as e:
+            print(f"❌ Error fetching quizzes from MongoDB: {e}")
+
+    # Fallback to memory
+    for q_id, doc in reversed(list(_memory_quizzes.items())):
+        if user_id == 0 or doc.get("creator_id") == user_id or "creator_id" not in doc:
+            results.append(doc)
+            if len(results) >= limit:
+                break
+    return results
+
+def save_schedule(quiz_id: str, scheduled_timestamp: float, time_str: str, group_id: int = 0):
     _memory_schedules[quiz_id] = {
         "quiz_id": quiz_id,
         "scheduled_timestamp": scheduled_timestamp,
-        "time_str": time_str
+        "time_str": time_str,
+        "group_id": group_id
     }
     if schedules_col is not None:
         try:
             schedules_col.update_one(
                 {"quiz_id": quiz_id},
-                {"$set": {"quiz_id": quiz_id, "scheduled_timestamp": scheduled_timestamp, "time_str": time_str}},
+                {"$set": {"quiz_id": quiz_id, "scheduled_timestamp": scheduled_timestamp, "time_str": time_str, "group_id": group_id}},
                 upsert=True
             )
         except Exception as e:
@@ -142,7 +178,8 @@ def get_active_schedules():
                     {
                         "quiz_id": d.get("quiz_id"),
                         "scheduled_timestamp": d.get("scheduled_timestamp"),
-                        "time_str": d.get("time_str")
+                        "time_str": d.get("time_str"),
+                        "group_id": d.get("group_id", 0)
                     }
                     for d in docs
                 ]
