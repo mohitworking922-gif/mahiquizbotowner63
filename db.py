@@ -1,7 +1,9 @@
 import os
 import json
+import re
 import random
 import string
+import urllib.parse
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -11,7 +13,29 @@ load_dotenv()
 _memory_quizzes = {}
 _memory_schedules = {}
 
-MONGO_URI = os.getenv("MONGODB_URI") or os.getenv("MONGO_URI") or os.getenv("DATABASE_URL")
+RAW_MONGO_URI = os.getenv("MONGODB_URI") or os.getenv("MONGO_URI") or os.getenv("DATABASE_URL")
+
+def fix_mongo_uri(uri):
+    if not uri:
+        return uri
+    try:
+        # Match mongodb+srv://username:password@host...
+        prefix_match = re.match(r'^(mongodb(?:\+srv)?://)([^:]+):([^@]+)@(.+)$', uri)
+        if prefix_match:
+            scheme = prefix_match.group(1)
+            username = prefix_match.group(2)
+            password = prefix_match.group(3)
+            rest = prefix_match.group(4)
+            
+            # URL encode username and password safely for RFC 3986
+            quoted_user = urllib.parse.quote_plus(urllib.parse.unquote(username))
+            quoted_pass = urllib.parse.quote_plus(urllib.parse.unquote(password))
+            return f"{scheme}{quoted_user}:{quoted_pass}@{rest}"
+    except Exception as e:
+        print(f"⚠️ URI parse error: {e}")
+    return uri
+
+MONGO_URI = fix_mongo_uri(RAW_MONGO_URI)
 
 client = None
 db = None
