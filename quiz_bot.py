@@ -2166,7 +2166,7 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None)
                         if active_session.get("stopped", False):
                             break
                         try:
-                            await bot.send_photo(chat_id=group_id, photo=photo_file_id)
+                            await bot.send_photo(chat_id=group_id, photo=photo_file_id, protect_content=True)
                             await asyncio.sleep(0.2)
                             break
                         except Exception as pe:
@@ -2200,7 +2200,7 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None)
                         if active_session.get("stopped", False):
                             break
                         try:
-                            await bot.send_message(chat_id=group_id, text=long_msg_text)
+                            await bot.send_message(chat_id=group_id, text=long_msg_text, protect_content=True)
                             print(f"[QUIZ TIMING] Q{idx} full question and options sent: {((time.monotonic() - t_long_start) * 1000.0):.2f}ms", flush=True)
                             break
                         except RetryAfter as e:
@@ -2238,7 +2238,8 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None)
                             type=Poll.QUIZ,
                             correct_option_id=correct_id,
                             is_anonymous=False,
-                            open_period=open_p
+                            open_period=open_p,
+                            protect_content=True
                         )
                         break
                     except RetryAfter as e:
