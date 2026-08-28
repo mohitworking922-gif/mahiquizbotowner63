@@ -2462,23 +2462,6 @@ async def send_quiz_leaderboard(bot, group_id: int, session: dict):
     # Sorting criteria: 1. Score desc, 2. Performance desc, 3. Total Time asc
     sorted_p = sorted(formatted_participants, key=lambda x: (-x["score"], -x["performance"], x["total_time"]))
 
-    caption_text = (
-        f"🏆🔥🔥 {quiz_name} 🚀🔥\n\n"
-        f"🏆 One Series • Complete Competitive Exam Preparation\n\n"
-        f"🚆 Railway | 👮 BPSSC | 📚 BSSC | 🏛️ UPSC 🎓 State Exams | 📝 All One-Day Exams\n\n"
-        f"ExamSpecial #QuizSeries #CompetitiveExams #Railway #UPSC #BSSC #BPSSC #mahi💗"
-    )
-
-    # Try generating and sending HD Leaderboard Image
-    try:
-        img_bytes = generate_leaderboard_image(sorted_p, quiz_name=quiz_name)
-        img_bytes.name = "leaderboard.png"
-        await bot.send_photo(chat_id=group_id, photo=img_bytes, caption=caption_text)
-        return
-    except Exception as e:
-        logger.error(f"Failed to send leaderboard image: {e}. Falling back to text leaderboard.")
-
-    # Fallback to Text Leaderboard if image generation fails
     msg_lines = [
         "🏁 Quiz Completed!\n",
         f"📝 {quiz_name}\n",
@@ -2491,12 +2474,13 @@ async def send_quiz_leaderboard(bot, group_id: int, session: dict):
         time_str = format_time(p["total_time"])
         line = (
             f"{badge} {p['name']} | ✅ {p['correct']} | ❌ {p['wrong']} | 🎯 {p['score']:.2f} | "
-            f"⏱️ {time_str} | 📊 {p['accuracy']:.1f}%\n"
+            f"⏱️ {time_str} | 📊 {p['accuracy']:.1f}% | 🚀 {p['performance']:.1f}%\n"
             f"────────────────"
         )
         msg_lines.append(line)
 
     full_text = "\n".join(msg_lines)
+
     if len(full_text) <= 4000:
         await bot.send_message(chat_id=group_id, text=full_text)
     else:
