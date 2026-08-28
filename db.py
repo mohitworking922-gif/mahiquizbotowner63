@@ -106,6 +106,7 @@ def get_quiz(quiz_id: str):
                     "quiz_id": doc.get("quiz_id"),
                     "name": doc.get("name"),
                     "timer": doc.get("timer"),
+                    "negative": float(doc.get("negative", 0.0)),
                     "questions": doc.get("questions", []),
                     "created_at": doc.get("created_at", ""),
                     "creator_name": doc.get("creator_name", "MAHI 💗"),
@@ -240,3 +241,20 @@ def update_quiz_sections(quiz_id: str, sections: list):
             quizzes_col.update_one({"quiz_id": quiz_id}, {"$set": {"sections": sections}})
         except Exception as e:
             print(f"❌ Error updating sections in MongoDB: {e}")
+
+def update_quiz_negative(quiz_id: str, negative: float):
+    if quiz_id in _memory_quizzes:
+        _memory_quizzes[quiz_id]["negative"] = negative
+    if quizzes_col is not None:
+        try:
+            quizzes_col.update_one({"quiz_id": quiz_id}, {"$set": {"negative": negative}})
+        except Exception as e:
+            print(f"❌ Error updating negative marking in MongoDB: {e}")
+
+def delete_quiz(quiz_id: str):
+    _memory_quizzes.pop(quiz_id, None)
+    if quizzes_col is not None:
+        try:
+            quizzes_col.delete_one({"quiz_id": quiz_id})
+        except Exception as e:
+            print(f"❌ Error deleting quiz from MongoDB: {e}")

@@ -35,6 +35,7 @@ from telegram.error import RetryAfter, TimedOut, NetworkError
 import config
 import db
 from parser import parse_questions_message
+from leaderboard_image import generate_leaderboard_image
 
 import sys
 import io
@@ -906,19 +907,100 @@ async def handle_private_message(update: Update, context: ContextTypes.DEFAULT_T
 
     elif step == "EDIT_NAME":
         quiz_id = state.get("quiz_id")
+        editor_msg_id = state.get("editor_msg_id")
+        prompt_msg_id = state.get("prompt_msg_id")
         if not text:
             await update.message.reply_text("Please send a valid Quiz name.")
             return
         db.update_quiz_name(quiz_id, text)
         del user_states[user.id]
-        await update.message.reply_text(f"✅ Quiz name updated to `{text}`!")
+
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+        if prompt_msg_id:
+            try:
+                await context.bot.delete_message(chat_id=chat.id, message_id=prompt_msg_id)
+            except Exception:
+                pass
+
         quiz_data = db.get_quiz(quiz_id)
         if quiz_data:
+            if editor_msg_id:
+                try:
+                    quiz_id = quiz_data["quiz_id"]
+                    name = quiz_data["name"]
+                    q_count = len(quiz_data["questions"])
+                    timer = quiz_data["timer"]
+                    negative = float(quiz_data.get("negative", 0.0))
+                    sec_enabled = quiz_data.get("sections_enabled", 0)
+                    sections = quiz_data.get("sections", [])
+                    sec_status_str = f"🟢 Enabled ({len(sections)} Sections)" if sec_enabled == 1 else "⚪ Disabled"
+                    toggle_sec_text = "📚 Sections: 🟢 Enabled" if sec_enabled == 1 else "📚 Sections: ⚪ Disabled"
+
+                    safe_name = html.escape(str(name))
+                    safe_quiz_id = html.escape(str(quiz_id))
+
+                    msg_text = (
+                        f"🎯 <b>QUIZ EDITOR PANEL</b>\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🆔 <b>Quiz ID:</b> <code>{safe_quiz_id}</code>\n"
+                        f"📌 <b>Name:</b> {safe_name}\n"
+                        f"🔢 <b>Questions:</b> {q_count}\n"
+                        f"⌚ <b>Timer:</b> {timer}s\n"
+                        f"📚 <b>Sections:</b> {sec_status_str}\n"
+                        f"➖ <b>Negative Marking:</b> {negative:.2f}\n"
+                        f"💰 <b>Access Type:</b> Free\n"
+                        f"📢 <b>Promo Banner:</b> ❌ None\n"
+                        f"━━━━━━━━━━━━━━━━━━━━"
+                    )
+
+                    keyboard = [
+                        [
+                            InlineKeyboardButton("✏️ Edit Name", callback_data=f"ed_name_{quiz_id}"),
+                            InlineKeyboardButton("⏱️ Edit Timer", callback_data=f"ed_timer_{quiz_id}")
+                        ],
+                        [
+                            InlineKeyboardButton("➕ Add Questions", callback_data=f"ed_addq_{quiz_id}"),
+                            InlineKeyboardButton("🔀 Shuffle", callback_data=f"ed_shuf_{quiz_id}")
+                        ],
+                        [
+                            InlineKeyboardButton("➖ Negative Mark", callback_data=f"ed_neg_{quiz_id}"),
+                            InlineKeyboardButton(toggle_sec_text, callback_data=f"sec_tog_{quiz_id}")
+                        ],
+                        [
+                            InlineKeyboardButton("👁️ View Questions", callback_data=f"ed_view_{quiz_id}"),
+                            InlineKeyboardButton("📚 Manage Sections", callback_data=f"sec_mgr_{quiz_id}")
+                        ],
+                        [
+                            InlineKeyboardButton("📤 Export File", callback_data=f"ed_exp_{quiz_id}"),
+                            InlineKeyboardButton("🗑️ Delete Quiz", callback_data=f"ed_del_{quiz_id}")
+                        ],
+                        [
+                            InlineKeyboardButton("❌ Close Editor", callback_data="ed_close")
+                        ]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+
+                    await context.bot.edit_message_text(
+                        chat_id=chat.id,
+                        message_id=editor_msg_id,
+                        text=msg_text,
+                        reply_markup=reply_markup,
+                        parse_mode="HTML"
+                    )
+                    return
+                except Exception as e:
+                    logger.warning(f"Failed to edit editor card: {e}")
+
             await send_quiz_editor_screen(update, context, quiz_data)
         return
 
     elif step == "EDIT_TIMER":
         quiz_id = state.get("quiz_id")
+        editor_msg_id = state.get("editor_msg_id")
+        prompt_msg_id = state.get("prompt_msg_id")
         try:
             timer_val = int(text)
             if timer_val <= 10:
@@ -929,9 +1011,183 @@ async def handle_private_message(update: Update, context: ContextTypes.DEFAULT_T
             return
         db.update_quiz_timer(quiz_id, timer_val)
         del user_states[user.id]
-        await update.message.reply_text(f"✅ Quiz timer updated to `{timer_val}s`!")
+
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+        if prompt_msg_id:
+            try:
+                await context.bot.delete_message(chat_id=chat.id, message_id=prompt_msg_id)
+            except Exception:
+                pass
+
         quiz_data = db.get_quiz(quiz_id)
         if quiz_data:
+            if editor_msg_id:
+                try:
+                    quiz_id = quiz_data["quiz_id"]
+                    name = quiz_data["name"]
+                    q_count = len(quiz_data["questions"])
+                    timer = quiz_data["timer"]
+                    negative = float(quiz_data.get("negative", 0.0))
+                    sec_enabled = quiz_data.get("sections_enabled", 0)
+                    sections = quiz_data.get("sections", [])
+                    sec_status_str = f"🟢 Enabled ({len(sections)} Sections)" if sec_enabled == 1 else "⚪ Disabled"
+                    toggle_sec_text = "📚 Sections: 🟢 Enabled" if sec_enabled == 1 else "📚 Sections: ⚪ Disabled"
+
+                    safe_name = html.escape(str(name))
+                    safe_quiz_id = html.escape(str(quiz_id))
+
+                    msg_text = (
+                        f"🎯 <b>QUIZ EDITOR PANEL</b>\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🆔 <b>Quiz ID:</b> <code>{safe_quiz_id}</code>\n"
+                        f"📌 <b>Name:</b> {safe_name}\n"
+                        f"🔢 <b>Questions:</b> {q_count}\n"
+                        f"⌚ <b>Timer:</b> {timer}s\n"
+                        f"📚 <b>Sections:</b> {sec_status_str}\n"
+                        f"➖ <b>Negative Marking:</b> {negative:.2f}\n"
+                        f"💰 <b>Access Type:</b> Free\n"
+                        f"📢 <b>Promo Banner:</b> ❌ None\n"
+                        f"━━━━━━━━━━━━━━━━━━━━"
+                    )
+
+                    keyboard = [
+                        [
+                            InlineKeyboardButton("✏️ Edit Name", callback_data=f"ed_name_{quiz_id}"),
+                            InlineKeyboardButton("⏱️ Edit Timer", callback_data=f"ed_timer_{quiz_id}")
+                        ],
+                        [
+                            InlineKeyboardButton("➕ Add Questions", callback_data=f"ed_addq_{quiz_id}"),
+                            InlineKeyboardButton("🔀 Shuffle", callback_data=f"ed_shuf_{quiz_id}")
+                        ],
+                        [
+                            InlineKeyboardButton("➖ Negative Mark", callback_data=f"ed_neg_{quiz_id}"),
+                            InlineKeyboardButton(toggle_sec_text, callback_data=f"sec_tog_{quiz_id}")
+                        ],
+                        [
+                            InlineKeyboardButton("👁️ View Questions", callback_data=f"ed_view_{quiz_id}"),
+                            InlineKeyboardButton("📚 Manage Sections", callback_data=f"sec_mgr_{quiz_id}")
+                        ],
+                        [
+                            InlineKeyboardButton("📤 Export File", callback_data=f"ed_exp_{quiz_id}"),
+                            InlineKeyboardButton("🗑️ Delete Quiz", callback_data=f"ed_del_{quiz_id}")
+                        ],
+                        [
+                            InlineKeyboardButton("❌ Close Editor", callback_data="ed_close")
+                        ]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+
+                    await context.bot.edit_message_text(
+                        chat_id=chat.id,
+                        message_id=editor_msg_id,
+                        text=msg_text,
+                        reply_markup=reply_markup,
+                        parse_mode="HTML"
+                    )
+                    return
+                except Exception as e:
+                    logger.warning(f"Failed to edit editor card: {e}")
+
+            await send_quiz_editor_screen(update, context, quiz_data)
+        return
+
+    elif step == "EDIT_NEGATIVE":
+        quiz_id = state.get("quiz_id")
+        editor_msg_id = state.get("editor_msg_id")
+        prompt_msg_id = state.get("prompt_msg_id")
+        try:
+            neg_val = float(text)
+            if neg_val < 0.0 or neg_val > 5.0:
+                await update.message.reply_text("➖ Negative marking 0.0 aur 5.0 ke beech hona chahiye.")
+                return
+        except ValueError:
+            await update.message.reply_text("➖ Valid number send karein (e.g. 0, 0.25, 0.50, 1.0):")
+            return
+        db.update_quiz_negative(quiz_id, neg_val)
+        del user_states[user.id]
+
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+        if prompt_msg_id:
+            try:
+                await context.bot.delete_message(chat_id=chat.id, message_id=prompt_msg_id)
+            except Exception:
+                pass
+
+        quiz_data = db.get_quiz(quiz_id)
+        if quiz_data:
+            if editor_msg_id:
+                try:
+                    quiz_id = quiz_data["quiz_id"]
+                    name = quiz_data["name"]
+                    q_count = len(quiz_data["questions"])
+                    timer = quiz_data["timer"]
+                    negative = float(quiz_data.get("negative", 0.0))
+                    sec_enabled = quiz_data.get("sections_enabled", 0)
+                    sections = quiz_data.get("sections", [])
+                    sec_status_str = f"🟢 Enabled ({len(sections)} Sections)" if sec_enabled == 1 else "⚪ Disabled"
+                    toggle_sec_text = "📚 Sections: 🟢 Enabled" if sec_enabled == 1 else "📚 Sections: ⚪ Disabled"
+
+                    safe_name = html.escape(str(name))
+                    safe_quiz_id = html.escape(str(quiz_id))
+
+                    msg_text = (
+                        f"🎯 <b>QUIZ EDITOR PANEL</b>\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🆔 <b>Quiz ID:</b> <code>{safe_quiz_id}</code>\n"
+                        f"📌 <b>Name:</b> {safe_name}\n"
+                        f"🔢 <b>Questions:</b> {q_count}\n"
+                        f"⌚ <b>Timer:</b> {timer}s\n"
+                        f"📚 <b>Sections:</b> {sec_status_str}\n"
+                        f"➖ <b>Negative Marking:</b> {negative:.2f}\n"
+                        f"💰 <b>Access Type:</b> Free\n"
+                        f"📢 <b>Promo Banner:</b> ❌ None\n"
+                        f"━━━━━━━━━━━━━━━━━━━━"
+                    )
+
+                    keyboard = [
+                        [
+                            InlineKeyboardButton("✏️ Edit Name", callback_data=f"ed_name_{quiz_id}"),
+                            InlineKeyboardButton("⏱️ Edit Timer", callback_data=f"ed_timer_{quiz_id}")
+                        ],
+                        [
+                            InlineKeyboardButton("➕ Add Questions", callback_data=f"ed_addq_{quiz_id}"),
+                            InlineKeyboardButton("🔀 Shuffle", callback_data=f"ed_shuf_{quiz_id}")
+                        ],
+                        [
+                            InlineKeyboardButton("➖ Negative Mark", callback_data=f"ed_neg_{quiz_id}"),
+                            InlineKeyboardButton(toggle_sec_text, callback_data=f"sec_tog_{quiz_id}")
+                        ],
+                        [
+                            InlineKeyboardButton("👁️ View Questions", callback_data=f"ed_view_{quiz_id}"),
+                            InlineKeyboardButton("📚 Manage Sections", callback_data=f"sec_mgr_{quiz_id}")
+                        ],
+                        [
+                            InlineKeyboardButton("📤 Export File", callback_data=f"ed_exp_{quiz_id}"),
+                            InlineKeyboardButton("🗑️ Delete Quiz", callback_data=f"ed_del_{quiz_id}")
+                        ],
+                        [
+                            InlineKeyboardButton("❌ Close Editor", callback_data="ed_close")
+                        ]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+
+                    await context.bot.edit_message_text(
+                        chat_id=chat.id,
+                        message_id=editor_msg_id,
+                        text=msg_text,
+                        reply_markup=reply_markup,
+                        parse_mode="HTML"
+                    )
+                    return
+                except Exception as e:
+                    logger.warning(f"Failed to edit editor card: {e}")
+
             await send_quiz_editor_screen(update, context, quiz_data)
         return
 
@@ -1184,27 +1440,33 @@ async def send_quiz_created_screen(update: Update, context: ContextTypes.DEFAULT
         await target_msg.reply_text(plain_msg, reply_markup=reply_markup)
 
 
-async def send_quiz_editor_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, quiz_data: dict):
+async def send_quiz_editor_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, quiz_data: dict, edit_existing: bool = True):
     quiz_id = quiz_data["quiz_id"]
     name = quiz_data["name"]
     q_count = len(quiz_data["questions"])
     timer = quiz_data["timer"]
+    negative = float(quiz_data.get("negative", 0.0))
     sec_enabled = quiz_data.get("sections_enabled", 0)
     sections = quiz_data.get("sections", [])
     sec_status_str = f"🟢 Enabled ({len(sections)} Sections)" if sec_enabled == 1 else "⚪ Disabled"
+    toggle_sec_text = "📚 Sections: 🟢 Enabled" if sec_enabled == 1 else "📚 Sections: ⚪ Disabled"
+
+    safe_name = html.escape(str(name))
+    safe_quiz_id = html.escape(str(quiz_id))
 
     msg_text = (
-        f"🎯 Quiz Editor\n\n"
-        f"📌 Name: {name}\n"
-        f"🔢 Questions: {q_count}\n"
-        f"⌚ Timer: {timer}s\n"
-        f"📚 Sections: {sec_status_str}\n"
-        f"💰 Type: Free\n"
-        f"➖ Negative: 0\n"
-        f"📢 Promo: ❌ None"
+        f"🎯 <b>QUIZ EDITOR PANEL</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🆔 <b>Quiz ID:</b> <code>{safe_quiz_id}</code>\n"
+        f"📌 <b>Name:</b> {safe_name}\n"
+        f"🔢 <b>Questions:</b> {q_count}\n"
+        f"⌚ <b>Timer:</b> {timer}s\n"
+        f"📚 <b>Sections:</b> {sec_status_str}\n"
+        f"➖ <b>Negative Marking:</b> {negative:.2f}\n"
+        f"💰 <b>Access Type:</b> Free\n"
+        f"📢 <b>Promo Banner:</b> ❌ None\n"
+        f"━━━━━━━━━━━━━━━━━━━━"
     )
-
-    toggle_btn_text = "📚 Sections: 🟢 Enabled" if sec_enabled == 1 else "📚 Sections: ⚪ Disabled"
 
     keyboard = [
         [
@@ -1216,27 +1478,34 @@ async def send_quiz_editor_screen(update: Update, context: ContextTypes.DEFAULT_
             InlineKeyboardButton("🔀 Shuffle", callback_data=f"ed_shuf_{quiz_id}")
         ],
         [
-            InlineKeyboardButton(toggle_btn_text, callback_data=f"sec_tog_{quiz_id}")
+            InlineKeyboardButton("➖ Negative Mark", callback_data=f"ed_neg_{quiz_id}"),
+            InlineKeyboardButton(toggle_sec_text, callback_data=f"sec_tog_{quiz_id}")
         ],
         [
+            InlineKeyboardButton("👁️ View Questions", callback_data=f"ed_view_{quiz_id}"),
             InlineKeyboardButton("📚 Manage Sections", callback_data=f"sec_mgr_{quiz_id}")
         ],
         [
-            InlineKeyboardButton("📤 Export", callback_data=f"ed_exp_{quiz_id}")
+            InlineKeyboardButton("📤 Export File", callback_data=f"ed_exp_{quiz_id}"),
+            InlineKeyboardButton("🗑️ Delete Quiz", callback_data=f"ed_del_{quiz_id}")
         ],
         [
-            InlineKeyboardButton("❌ Close", callback_data="ed_close")
+            InlineKeyboardButton("❌ Close Editor", callback_data="ed_close")
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    if update.callback_query:
+    if update.callback_query and edit_existing:
         try:
-            await update.callback_query.message.edit_text(msg_text, reply_markup=reply_markup)
+            await update.callback_query.message.edit_text(msg_text, reply_markup=reply_markup, parse_mode="HTML")
+            return
         except Exception:
-            await update.callback_query.message.reply_text(msg_text, reply_markup=reply_markup)
-    else:
-        await update.message.reply_text(msg_text, reply_markup=reply_markup)
+            pass
+
+    if update.message:
+        await update.message.reply_text(msg_text, reply_markup=reply_markup, parse_mode="HTML")
+    elif update.callback_query:
+        await update.callback_query.message.reply_text(msg_text, reply_markup=reply_markup, parse_mode="HTML")
 
 
 async def send_section_manager_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, quiz_data: dict):
@@ -1513,14 +1782,111 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
     if data.startswith("ed_name_"):
         quiz_id = data.replace("ed_name_", "")
-        user_states[user.id] = {"step": "EDIT_NAME", "quiz_id": quiz_id}
-        await query.message.reply_text(f"✏️ Send new Quiz Name for `{quiz_id}`:")
+        prompt_msg = await query.message.reply_text(f"✏️ Send new Quiz Name for `{quiz_id}`:")
+        user_states[user.id] = {
+            "step": "EDIT_NAME",
+            "quiz_id": quiz_id,
+            "editor_msg_id": query.message.message_id,
+            "prompt_msg_id": prompt_msg.message_id
+        }
         return
 
     if data.startswith("ed_timer_"):
         quiz_id = data.replace("ed_timer_", "")
-        user_states[user.id] = {"step": "EDIT_TIMER", "quiz_id": quiz_id}
-        await query.message.reply_text(f"⏱️ Send new Timer in seconds (>10) for `{quiz_id}`:")
+        prompt_msg = await query.message.reply_text(f"⏱️ Send new Timer in seconds (>10) for `{quiz_id}`:")
+        user_states[user.id] = {
+            "step": "EDIT_TIMER",
+            "quiz_id": quiz_id,
+            "editor_msg_id": query.message.message_id,
+            "prompt_msg_id": prompt_msg.message_id
+        }
+        return
+
+    if data.startswith("ed_neg_"):
+        quiz_id = data.replace("ed_neg_", "")
+        prompt_msg = await query.message.reply_text(f"➖ Send Negative Marking per wrong answer for `{quiz_id}` (e.g. 0, 0.25, 0.50, 1.0):")
+        user_states[user.id] = {
+            "step": "EDIT_NEGATIVE",
+            "quiz_id": quiz_id,
+            "editor_msg_id": query.message.message_id,
+            "prompt_msg_id": prompt_msg.message_id
+        }
+        return
+
+    if data.startswith("ed_view_"):
+        quiz_id = data.replace("ed_view_", "")
+        quiz_data = db.get_quiz(quiz_id)
+        if not quiz_data:
+            await query.message.reply_text("❌ Quiz not found.")
+            return
+
+        questions = quiz_data.get("questions", [])
+        if not questions:
+            await query.message.reply_text("❌ No questions found in this quiz.")
+            return
+
+        lines = [f"👁️ <b>PREVIEW QUESTIONS ({len(questions)} Questions)</b>\n"]
+        for idx, q in enumerate(questions[:25], start=1):
+            q_text = html.escape(str(q.get("question_text", "")))
+            lines.append(f"<b>Q{idx}. {q_text}</b>")
+            for o_idx, opt in enumerate(q.get("options", [])):
+                safe_opt = html.escape(str(opt))
+                if o_idx == q.get("correct_option_id", 0):
+                    lines.append(f"   • {safe_opt} ✅")
+                else:
+                    lines.append(f"   • {safe_opt}")
+            lines.append("")
+
+        if len(questions) > 25:
+            lines.append(f"<i>...and {len(questions) - 25} more questions. Export file to view all.</i>")
+
+        msg_text = "\n".join(lines)
+        keyboard = [[InlineKeyboardButton("🔙 Back to Editor", callback_data=f"sec_back_{quiz_id}")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        try:
+            await query.message.edit_text(msg_text, reply_markup=reply_markup, parse_mode="HTML")
+        except Exception:
+            await query.message.reply_text(msg_text, reply_markup=reply_markup, parse_mode="HTML")
+        return
+
+    if data.startswith("ed_del_"):
+        quiz_id = data.replace("ed_del_", "")
+        quiz_data = db.get_quiz(quiz_id)
+        if not quiz_data:
+            await query.message.reply_text("❌ Quiz not found.")
+            return
+
+        safe_name = html.escape(str(quiz_data.get("name", "Quiz")))
+        safe_quiz_id = html.escape(str(quiz_id))
+
+        msg_text = (
+            f"⚠️ <b>CONFIRM DELETE QUIZ</b>\n\n"
+            f"Are you sure you want to delete this quiz?\n"
+            f"📌 <b>Name:</b> {safe_name}\n"
+            f"🆔 <b>Quiz ID:</b> <code>{safe_quiz_id}</code>\n\n"
+            f"<i>This action cannot be undone!</i>"
+        )
+        keyboard = [
+            [
+                InlineKeyboardButton("🗑️ Yes, Delete Permanently", callback_data=f"ed_delconf_{quiz_id}"),
+                InlineKeyboardButton("❌ Cancel", callback_data=f"sec_back_{quiz_id}")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        try:
+            await query.message.edit_text(msg_text, reply_markup=reply_markup, parse_mode="HTML")
+        except Exception:
+            await query.message.reply_text(msg_text, reply_markup=reply_markup, parse_mode="HTML")
+        return
+
+    if data.startswith("ed_delconf_"):
+        quiz_id = data.replace("ed_delconf_", "")
+        db.delete_quiz(quiz_id)
+        try:
+            await query.message.edit_text(f"✅ Quiz `{quiz_id}` deleted permanently!")
+        except Exception:
+            await query.message.reply_text(f"✅ Quiz `{quiz_id}` deleted permanently!")
         return
 
     if data.startswith("ed_addq_"):
@@ -1539,7 +1905,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             questions = quiz_data["questions"]
             random.shuffle(questions)
             db.update_quiz_questions(quiz_id, questions)
-            await query.message.reply_text(f"🔀 Questions shuffled for Quiz `{quiz_id}`!")
             quiz_data["questions"] = questions
             await send_quiz_editor_screen(update, context, quiz_data)
         else:
@@ -2058,6 +2423,11 @@ async def send_quiz_leaderboard(bot, group_id: int, session: dict):
     participants = list(session["participants"].values())
     total_q = session["total_questions"]
     quiz_name = session.get("name", "Quiz")
+    quiz_id = session.get("quiz_id")
+
+    # Fetch quiz negative marking setting
+    quiz_data = db.get_quiz(quiz_id) if quiz_id else None
+    neg_rate = float(quiz_data.get("negative", 0.0)) if quiz_data else 0.0
 
     if not participants:
         await bot.send_message(
@@ -2066,54 +2436,70 @@ async def send_quiz_leaderboard(bot, group_id: int, session: dict):
         )
         return
 
-    # Sorting criteria:
-    # 1. Score (Correct) descending
-    # 2. Performance % descending
-    # 3. Total Time ascending (faster is better)
-    def sort_key(p):
+    # Process score, accuracy, and format participant list
+    formatted_participants = []
+    for p in participants:
         correct = p["correct"]
+        wrong = p["wrong"]
         attempted = len(p["attempted_set"])
-        perf = (correct / attempted * 100.0) if attempted > 0 else 0.0
+        score = float(correct) - (float(wrong) * neg_rate)
         total_time = p["total_time"]
-        return (-correct, -perf, total_time)
+        accuracy = (correct / total_q * 100.0) if total_q > 0 else 0.0
+        perf = (correct / attempted * 100.0) if attempted > 0 else 0.0
 
-    sorted_p = sorted(participants, key=sort_key)
+        p_info = {
+            "name": p["name"],
+            "correct": correct,
+            "wrong": wrong,
+            "score": score,
+            "total_time": total_time,
+            "accuracy": accuracy,
+            "performance": perf,
+            "attempted": attempted
+        }
+        formatted_participants.append(p_info)
 
+    # Sorting criteria: 1. Score desc, 2. Performance desc, 3. Total Time asc
+    sorted_p = sorted(formatted_participants, key=lambda x: (-x["score"], -x["performance"], x["total_time"]))
+
+    caption_text = (
+        f"🏆🔥🔥 {quiz_name} 🚀🔥\n\n"
+        f"🏆 One Series • Complete Competitive Exam Preparation\n\n"
+        f"🚆 Railway | 👮 BPSSC | 📚 BSSC | 🏛️ UPSC 🎓 State Exams | 📝 All One-Day Exams\n\n"
+        f"ExamSpecial #QuizSeries #CompetitiveExams #Railway #UPSC #BSSC #BPSSC #mahi💗"
+    )
+
+    # Try generating and sending HD Leaderboard Image
+    try:
+        img_bytes = generate_leaderboard_image(sorted_p, quiz_name=quiz_name)
+        img_bytes.name = "leaderboard.png"
+        await bot.send_photo(chat_id=group_id, photo=img_bytes, caption=caption_text)
+        return
+    except Exception as e:
+        logger.error(f"Failed to send leaderboard image: {e}. Falling back to text leaderboard.")
+
+    # Fallback to Text Leaderboard if image generation fails
     msg_lines = [
         "🏁 Quiz Completed!\n",
         f"📝 {quiz_name}\n",
         "🎯 Top Performers:\n"
     ]
-
     rank_emojis = {1: "🥇", 2: "🥈", 3: "🥉"}
 
     for idx, p in enumerate(sorted_p, start=1):
-        name = p["name"]
-        correct = p["correct"]
-        wrong = p["wrong"]
-        attempted = len(p["attempted_set"])
-        score = float(correct)
-        time_str = format_time(p["total_time"])
-
-        accuracy = (correct / total_q * 100.0) if total_q > 0 else 0.0
-        performance = (correct / attempted * 100.0) if attempted > 0 else 0.0
-
         badge = rank_emojis.get(idx, f"{idx}.")
-
+        time_str = format_time(p["total_time"])
         line = (
-            f"{badge} {name} | ✅ {correct} | ❌ {wrong} | 🎯 {score:.2f} | "
-            f"⏱️ {time_str} | 📊 {accuracy:.1f}% | 🚀 {performance:.1f}%\n"
+            f"{badge} {p['name']} | ✅ {p['correct']} | ❌ {p['wrong']} | 🎯 {p['score']:.2f} | "
+            f"⏱️ {time_str} | 📊 {p['accuracy']:.1f}%\n"
             f"────────────────"
         )
         msg_lines.append(line)
 
     full_text = "\n".join(msg_lines)
-
-    # Handle message length limit (4096 chars)
     if len(full_text) <= 4000:
         await bot.send_message(chat_id=group_id, text=full_text)
     else:
-        # Split into multiple chunks
         chunk = ""
         for line in msg_lines:
             if len(chunk) + len(line) + 2 > 4000:
