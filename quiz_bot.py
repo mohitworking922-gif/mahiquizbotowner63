@@ -532,15 +532,17 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat.type != "private":
         await update.message.reply_text(
             "👋 **Welcome to Quiz Bot!**\n\n"
-            "• Private chat me mujhe /start karke apna Naya Quiz banayein.\n"
             "• Group me kisi quiz ko chalane ke liye command format try karein: `/start quiz_ID`\n"
-            "• Aapke banaye quizzes ki list ke liye: `/myquizzes`\n"
             "• Help ke liye: `/help`",
             parse_mode="Markdown"
         )
         return
 
-    # Start new quiz creation flow for any user in private chat
+    # Restrict Quiz creation in private chat to Bot Owner only (Silent return for non-owner)
+    if not is_owner(user.id):
+        return
+
+    # Start new quiz creation flow for owner in private chat
     user_states[user.id] = {
         "step": "WAITING_NAME",
         "name": "",
@@ -722,7 +724,8 @@ async def handle_private_message(update: Update, context: ContextTypes.DEFAULT_T
 
     state = user_states.get(user.id)
     if not state:
-        await update.message.reply_text("Send /start to create a new Quiz.")
+        if is_owner(user.id):
+            await update.message.reply_text("Send /start to create a new Quiz.")
         return
 
     text = update.message.text.strip() if update.message.text else ""
@@ -1546,7 +1549,7 @@ async def send_section_manager_screen(update: Update, context: ContextTypes.DEFA
 
 async def myquizzes_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if not user:
+    if not user or not is_owner(user.id):
         return
     quizzes = db.get_quizzes_by_user(user.id)
     if not quizzes:
@@ -1589,7 +1592,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if not user:
+    if not user or not is_owner(user.id):
         return
 
     args = context.args
