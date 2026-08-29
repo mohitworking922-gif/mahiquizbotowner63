@@ -2421,6 +2421,10 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                 poll_question_text = truncate_text(q_text, 200)
                 display_options = [truncate_text(opt, 40) for opt in options]
 
+                q_explanation = q_item.get("explanation", "").strip()
+                if q_explanation:
+                    q_explanation = truncate_text(q_explanation, 200)
+
                 t_poll_create_start = time.monotonic()
                 print(f"[QUIZ TIMING] Q{idx} poll creation started", flush=True)
 
@@ -2428,16 +2432,20 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                     if active_session.get("stopped", False):
                         break
                     try:
-                        poll_msg = await bot.send_poll(
-                            chat_id=group_id,
-                            question=poll_question_text,
-                            options=display_options,
-                            type=Poll.QUIZ,
-                            correct_option_id=correct_id,
-                            is_anonymous=False,
-                            open_period=open_p,
-                            protect_content=True
-                        )
+                        poll_kwargs = {
+                            "chat_id": group_id,
+                            "question": poll_question_text,
+                            "options": display_options,
+                            "type": Poll.QUIZ,
+                            "correct_option_id": correct_id,
+                            "is_anonymous": False,
+                            "open_period": open_p,
+                            "protect_content": True
+                        }
+                        if q_explanation:
+                            poll_kwargs["explanation"] = q_explanation
+
+                        poll_msg = await bot.send_poll(**poll_kwargs)
                         break
                     except RetryAfter as e:
                         retry_wait = float(e.retry_after)

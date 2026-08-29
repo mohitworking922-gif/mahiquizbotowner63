@@ -2,10 +2,29 @@ import re
 
 def parse_single_question_block(block_text: str):
     """
-    Parses a single block of text containing question lines (Hindi + English) followed by options.
-    Returns dict: {"question_text": str, "options": list, "correct_option_id": int} or None if invalid.
+    Parses a single block of text containing question lines followed by options and optional Ex/Explanation lines.
+    Returns dict: {"question_text": str, "options": list, "correct_option_id": int, "explanation": str} or None if invalid.
     """
     raw_lines = [line.strip() for line in block_text.strip().split("\n") if line.strip()]
+    if len(raw_lines) < 3:
+        return None
+
+    # Extract explanation if present (Ex:, EX:, ex:, Explanation:, explanation:, व्याख्या:)
+    explanation = ""
+    ex_idx = -1
+    ex_regex = re.compile(r'^(?:Ex|EX|ex|Explanation|explanation|व्याख्या)\s*[:\-]\s*', re.IGNORECASE)
+
+    for idx, line in enumerate(raw_lines):
+        if ex_regex.match(line):
+            ex_idx = idx
+            break
+
+    if ex_idx != -1:
+        ex_lines = raw_lines[ex_idx:]
+        ex_text = "\n".join(ex_lines).strip()
+        explanation = ex_regex.sub('', ex_text).strip()
+        raw_lines = raw_lines[:ex_idx]
+
     if len(raw_lines) < 3:
         return None
 
@@ -21,7 +40,6 @@ def parse_single_question_block(block_text: str):
 
     option_prefix_regex = re.compile(r'^(?:[A-Za-z0-9][\.\)\:]|[\(\[\{][A-Za-z0-9][\)\]\}]|[\u25cb\u2022\u25cf\u25b6\U0001f170-\U0001f189])\s*')
 
-    # Step 1: Check if any line before or at correct_line_idx has an explicit option prefix (excluding line 0 which is question text)
     opt_start_idx = -1
     for i in range(correct_line_idx, 0, -1):
         line_clean = raw_lines[i].replace("✅", "").strip()
@@ -31,7 +49,6 @@ def parse_single_question_block(block_text: str):
             if opt_start_idx != -1:
                 break
 
-    # Step 2: If no option prefixes were found, determine option start index based on block structure
     if opt_start_idx == -1 or opt_start_idx > correct_line_idx:
         possible_start = max(1, correct_line_idx - 3)
         opt_start_idx = possible_start
@@ -63,32 +80,40 @@ def parse_single_question_block(block_text: str):
     if correct_index == -1:
         return None
 
-    return {
-        "question_text": question_text,  # Full untruncated multi-line question text!
+    res = {
+        "question_text": question_text,
         "options": clean_options,
         "correct_option_id": correct_index
     }
+    if explanation:
+        res["explanation"] = explanation[:200]
+
+    return res
 
 def parse_questions_message(text: str):
     """
     Parses input message which may contain one or multiple question blocks.
-    Returns list of question dicts.
+    Returns list of question dicts and list of error messages.
     """
     parsed_questions = []
+    errors = []
     
-    # Try splitting by double linebreaks or question headers if multiple questions sent
     blocks = re.split(r'\n\s*\n+', text.strip())
 
-    for block in blocks:
+    for idx, block in enumerate(blocks, start=1):
         q = parse_single_question_block(block)
         if q:
             parsed_questions.append(q)
+        else:
+            if "✅" not in block:
+                errors.append(f"Block #{idx}: Missing correct option checkmark (✅).")
+            else:
+                errors.append(f"Block #{idx}: Could not parse options/question layout.")
 
-    # Fallback: if splitting by double linebreaks didn't yield all questions or yielded none,
-    # try parsing the full text as a single block if possible.
     if not parsed_questions:
         q = parse_single_question_block(text)
         if q:
             parsed_questions.append(q)
+            errors = []
 
-    return parsed_questions
+    return parsed_questions, errors
