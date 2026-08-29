@@ -1653,8 +1653,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             quiz_id = data.replace("qw_quick_", "").strip()
             quiz_data = db.get_quiz(quiz_id)
             if quiz_data:
-                timer = session.get("timer", quiz_data.get("timer", 20)) if session else quiz_data.get("timer", 20)
-                mark = session.get("correct_mark", 1.0) if session else 1.0
+                last_cfg = get_last_settings(user.id, query.message.chat_id, quiz_data)
+                timer = last_cfg.get("timer", quiz_data.get("timer", 20))
+                mark = last_cfg.get("correct_mark", 1.0)
                 try:
                     await query.message.delete()
                 except Exception:
@@ -1763,6 +1764,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             if quiz_data:
                 timer = session.get("timer", quiz_data.get("timer", 20)) if session else quiz_data.get("timer", 20)
                 mark = session.get("correct_mark", 1.0) if session else 1.0
+                save_last_settings(user.id, query.message.chat_id, timer, mark)
                 try:
                     await query.message.delete()
                 except Exception:
@@ -2142,6 +2144,23 @@ def cleanup_quiz_session(quiz_id: str):
 
 # Helper to track launch wizard state per message/chat
 group_wizard_sessions: Dict[str, Dict[str, Any]] = {}
+user_last_launch_settings: Dict[int, Dict[str, Any]] = {}
+group_last_launch_settings: Dict[int, Dict[str, Any]] = {}
+
+def get_last_settings(user_id: int, chat_id: int, quiz_data: dict) -> dict:
+    if user_id in user_last_launch_settings:
+        return user_last_launch_settings[user_id]
+    if chat_id in group_last_launch_settings:
+        return group_last_launch_settings[chat_id]
+    return {
+        "correct_mark": 1.0,
+        "timer": quiz_data.get("timer", 20)
+    }
+
+def save_last_settings(user_id: int, chat_id: int, timer: int, mark: float):
+    setting = {"correct_mark": float(mark), "timer": int(timer)}
+    user_last_launch_settings[user_id] = setting
+    group_last_launch_settings[chat_id] = setting
 
 async def send_launch_wizard_step1(bot, group_id: int, quiz_data: dict, reply_to_msg_id: int = None):
     quiz_id = quiz_data["quiz_id"]
