@@ -98,11 +98,14 @@ def save_quiz(name: str, timer: int, questions: list, creator_name: str = "MAHI 
     return quiz_id
 
 def get_quiz(quiz_id: str):
+    if quiz_id in _memory_quizzes:
+        return _memory_quizzes[quiz_id]
+
     if quizzes_col is not None:
         try:
             doc = quizzes_col.find_one({"quiz_id": quiz_id})
             if doc:
-                return {
+                quiz_data = {
                     "quiz_id": doc.get("quiz_id"),
                     "name": doc.get("name"),
                     "timer": doc.get("timer"),
@@ -114,6 +117,8 @@ def get_quiz(quiz_id: str):
                     "sections_enabled": doc.get("sections_enabled", 0),
                     "sections": doc.get("sections", [])
                 }
+                _memory_quizzes[quiz_id] = quiz_data
+                return quiz_data
         except Exception as e:
             print(f"❌ Error fetching quiz from MongoDB: {e}")
             
@@ -129,7 +134,7 @@ def get_quizzes_by_user(user_id: int = 0, limit: int = 20):
                 query = {"$or": [{"creator_id": user_id}, {"creator_id": {"$exists": False}}]}
             docs = list(quizzes_col.find(query).sort("_id", -1).limit(limit))
             for doc in docs:
-                results.append({
+                item = {
                     "quiz_id": doc.get("quiz_id"),
                     "name": doc.get("name"),
                     "timer": doc.get("timer"),
@@ -139,7 +144,9 @@ def get_quizzes_by_user(user_id: int = 0, limit: int = 20):
                     "creator_id": doc.get("creator_id", 0),
                     "sections_enabled": doc.get("sections_enabled", 0),
                     "sections": doc.get("sections", [])
-                })
+                }
+                _memory_quizzes[doc.get("quiz_id")] = item
+                results.append(item)
             if results:
                 return results
         except Exception as e:
