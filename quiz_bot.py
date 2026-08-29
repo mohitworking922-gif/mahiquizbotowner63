@@ -521,9 +521,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if chat.type != "private":
-            logger.info(f"Triggering Quiz {quiz_id} via start link in group chat_id={chat.id}")
-            await update.message.reply_text(f"🚀 Quiz '{quiz_data['name']}' starting in this group ({chat.id})!")
-            asyncio.create_task(run_quiz_session(context.bot, chat.id, quiz_data, update.message))
+            logger.info(f"Triggering Quiz {quiz_id} setup wizard in group chat_id={chat.id}")
+            await send_launch_wizard_step1(context.bot, chat.id, quiz_data, update.message.message_id)
             return
 
         await send_quiz_created_screen(update, context, quiz_data)
@@ -1646,6 +1645,132 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
     data = query.data
 
+    if data.startswith("qw_"):
+        wizard_key = f"{query.message.chat_id}_{query.message.message_id}"
+        session = group_wizard_sessions.get(wizard_key)
+
+        if data.startswith("qw_quick_"):
+            quiz_id = data.replace("qw_quick_", "").strip()
+            quiz_data = db.get_quiz(quiz_id)
+            if quiz_data:
+                timer = session.get("timer", quiz_data.get("timer", 20)) if session else quiz_data.get("timer", 20)
+                mark = session.get("correct_mark", 1.0) if session else 1.0
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+                group_wizard_sessions.pop(wizard_key, None)
+                asyncio.create_task(run_quiz_session(context.bot, query.message.chat_id, quiz_data, query.message, custom_timer=timer, custom_correct_mark=mark))
+            return
+
+        if data.startswith("qw_mk_"):
+            rest = data.replace("qw_mk_", "")
+            subparts = rest.split("_")
+            val_str = subparts[0]
+            quiz_id = subparts[1] if len(subparts) > 1 else ""
+            quiz_data = db.get_quiz(quiz_id)
+            if not quiz_data:
+                try:
+                    await query.answer("❌ Quiz not found.")
+                except Exception:
+                    pass
+                return
+
+            mark = 1.0
+            if val_str != "skip":
+                try:
+                    mark = float(val_str)
+                except ValueError:
+                    mark = 1.0
+
+            if not session:
+                session = {"quiz_id": quiz_id, "correct_mark": mark, "timer": quiz_data.get("timer", 20)}
+                group_wizard_sessions[wizard_key] = session
+            else:
+                session["correct_mark"] = mark
+
+            default_timer = quiz_data.get("timer", 20)
+            step2_text = (
+                "⏱️ **Timer per question?**\n\n"
+                "Select a time — Start button will appear after."
+            )
+            step2_keyboard = [
+                [
+                    InlineKeyboardButton("10s", callback_data=f"qw_tm_10_{quiz_id}"),
+                    InlineKeyboardButton("15s", callback_data=f"qw_tm_15_{quiz_id}"),
+                    InlineKeyboardButton("20s", callback_data=f"qw_tm_20_{quiz_id}")
+                ],
+                [
+                    InlineKeyboardButton("25s", callback_data=f"qw_tm_25_{quiz_id}"),
+                    InlineKeyboardButton("30s", callback_data=f"qw_tm_30_{quiz_id}"),
+                    InlineKeyboardButton("40s", callback_data=f"qw_tm_40_{quiz_id}")
+                ],
+                [
+                    InlineKeyboardButton(f"⏭️ Quiz default ({default_timer}s)", callback_data=f"qw_tm_def_{quiz_id}")
+                ]
+            ]
+            try:
+                await query.message.edit_text(step2_text, reply_markup=InlineKeyboardMarkup(step2_keyboard), parse_mode="Markdown")
+            except Exception:
+                pass
+            return
+
+        if data.startswith("qw_tm_"):
+            rest = data.replace("qw_tm_", "")
+            subparts = rest.split("_")
+            val_str = subparts[0]
+            quiz_id = subparts[1] if len(subparts) > 1 else ""
+            quiz_data = db.get_quiz(quiz_id)
+            if not quiz_data:
+                try:
+                    await query.answer("❌ Quiz not found.")
+                except Exception:
+                    pass
+                return
+
+            default_timer = quiz_data.get("timer", 20)
+            timer_val = default_timer
+            if val_str != "def":
+                try:
+                    timer_val = int(val_str)
+                except ValueError:
+                    timer_val = default_timer
+
+            if not session:
+                session = {"quiz_id": quiz_id, "correct_mark": 1.0, "timer": timer_val}
+                group_wizard_sessions[wizard_key] = session
+            else:
+                session["timer"] = timer_val
+
+            step3_text = (
+                f"⏱️ **Timer set: {timer_val}s**\n\n"
+                "All set! Press Start when ready."
+            )
+            step3_keyboard = [
+                [
+                    InlineKeyboardButton("▶️ Start Quiz", callback_data=f"qw_start_{quiz_id}")
+                ]
+            ]
+            try:
+                await query.message.edit_text(step3_text, reply_markup=InlineKeyboardMarkup(step3_keyboard), parse_mode="Markdown")
+            except Exception:
+                pass
+            return
+
+        if data.startswith("qw_start_"):
+            quiz_id = data.replace("qw_start_", "").strip()
+            quiz_data = db.get_quiz(quiz_id)
+            if quiz_data:
+                timer = session.get("timer", quiz_data.get("timer", 20)) if session else quiz_data.get("timer", 20)
+                mark = session.get("correct_mark", 1.0) if session else 1.0
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+                group_wizard_sessions.pop(wizard_key, None)
+                asyncio.create_task(run_quiz_session(context.bot, query.message.chat_id, quiz_data, query.message, custom_timer=timer, custom_correct_mark=mark))
+            return
+
     if data == "create_sec_no":
         state = user_states.get(user.id)
         if not state:
@@ -1749,11 +1874,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             return
 
         target_group = config.GROUP_ID
-        logger.info(f"Triggering Quiz {quiz_id} in GROUP_ID={target_group}")
+        logger.info(f"Triggering Quiz {quiz_id} setup wizard in default GROUP_ID={target_group}")
 
-        # Start Async Task for running the Quiz in the default authorized group
-        asyncio.create_task(run_quiz_session(context.bot, target_group, quiz_data, query.message))
-        await query.message.reply_text(f"🚀 Quiz '{quiz_data['name']}' starting in default group ({target_group})!")
+        await send_launch_wizard_step1(context.bot, target_group, quiz_data)
+        await query.message.reply_text(f"🚀 Quiz '{quiz_data['name']}' setup wizard sent to default group ({target_group})!")
         return
 
     if data.startswith("ed_exp_"):
@@ -1997,12 +2121,12 @@ async def chat_shared_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     if user.id in user_states:
         del user_states[user.id]
 
-    logger.info(f"Triggering Quiz {quiz_id} in selected group_id={selected_group_id}")
+    logger.info(f"Triggering Quiz {quiz_id} setup wizard in selected group_id={selected_group_id}")
     await update.message.reply_text(
-        f"🚀 Quiz '{quiz_data['name']}' starting in selected group (`{selected_group_id}`)!",
+        f"🚀 Quiz '{quiz_data['name']}' setup wizard sent to selected group (`{selected_group_id}`)!",
         reply_markup=ReplyKeyboardRemove()
     )
-    asyncio.create_task(run_quiz_session(context.bot, selected_group_id, quiz_data, update.message))
+    await send_launch_wizard_step1(context.bot, selected_group_id, quiz_data)
 
 
 # ==========================================
@@ -2016,7 +2140,59 @@ def cleanup_quiz_session(quiz_id: str):
         poll_id_map.pop(p_id, None)
 
 
-async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None):
+# Helper to track launch wizard state per message/chat
+group_wizard_sessions: Dict[str, Dict[str, Any]] = {}
+
+async def send_launch_wizard_step1(bot, group_id: int, quiz_data: dict, reply_to_msg_id: int = None):
+    quiz_id = quiz_data["quiz_id"]
+    default_timer = quiz_data.get("timer", 20)
+    
+    text = (
+        "🎯 **Correct mark per question?**\n\n"
+        "Or tap ⚡ **Quick Start** to launch immediately with your last-used settings."
+    )
+    keyboard = [
+        [
+            InlineKeyboardButton("1", callback_data=f"qw_mk_1_{quiz_id}"),
+            InlineKeyboardButton("2", callback_data=f"qw_mk_2_{quiz_id}"),
+            InlineKeyboardButton("3", callback_data=f"qw_mk_3_{quiz_id}"),
+            InlineKeyboardButton("4", callback_data=f"qw_mk_4_{quiz_id}"),
+            InlineKeyboardButton("5", callback_data=f"qw_mk_5_{quiz_id}")
+        ],
+        [
+            InlineKeyboardButton("⏭️ Skip (default 1)", callback_data=f"qw_mk_skip_{quiz_id}")
+        ],
+        [
+            InlineKeyboardButton("⚡ Quick Start (your last settings)", callback_data=f"qw_quick_{quiz_id}")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    try:
+        msg = await bot.send_message(
+            chat_id=group_id,
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode="Markdown",
+            reply_to_message_id=reply_to_msg_id
+        )
+    except Exception:
+        msg = await bot.send_message(
+            chat_id=group_id,
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+    wizard_key = f"{group_id}_{msg.message_id}"
+    group_wizard_sessions[wizard_key] = {
+        "quiz_id": quiz_id,
+        "correct_mark": 1.0,
+        "timer": default_timer,
+        "step": "WAITING_MARKS"
+    }
+    return msg
+
+
+async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None, custom_timer=None, custom_correct_mark=None):
     if quiz_engine_bot is not None:
         bot = quiz_engine_bot
 
@@ -2035,7 +2211,8 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None)
                     pass
             return
 
-    timer = quiz_data["timer"]
+    timer = int(custom_timer) if custom_timer is not None else quiz_data.get("timer", 20)
+    correct_mark = float(custom_correct_mark) if custom_correct_mark is not None else 1.0
     questions = quiz_data["questions"]
     total_q = len(questions)
     sec_enabled = quiz_data.get("sections_enabled", 0)
@@ -2050,6 +2227,7 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None)
         "group_id": group_id,
         "name": name,
         "timer": timer,
+        "correct_mark": correct_mark,
         "total_questions": total_q,
         "sections_enabled": sec_enabled,
         "sections": sections,
