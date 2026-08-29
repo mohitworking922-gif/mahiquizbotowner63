@@ -2314,9 +2314,17 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
             try:
                 t_prep_start = time.monotonic()
                 q_item = questions[idx - 1]
-                raw_question = q_item["question_text"]
-                options = q_item["options"]
-                correct_id = q_item["correct_option_id"]
+                while isinstance(q_item, list) and len(q_item) > 0:
+                    q_item = q_item[0]
+
+                if not isinstance(q_item, dict):
+                    logger.error(f"Invalid question item at index {idx}: {q_item}")
+                    idx += 1
+                    continue
+
+                raw_question = q_item.get("question_text", "")
+                options = q_item.get("options", [])
+                correct_id = q_item.get("correct_option_id", 0)
                 print(f"[QUIZ TIMING] Q{idx} question preparation: {((time.monotonic() - t_prep_start) * 1000.0):.2f}ms", flush=True)
 
                 # Section Transition check before question starts

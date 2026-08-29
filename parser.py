@@ -93,27 +93,20 @@ def parse_single_question_block(block_text: str):
 def parse_questions_message(text: str):
     """
     Parses input message which may contain one or multiple question blocks.
-    Returns list of question dicts and list of error messages.
+    Returns list of question dicts.
     """
     parsed_questions = []
-    errors = []
     
     blocks = re.split(r'\n\s*\n+', text.strip())
 
-    for idx, block in enumerate(blocks, start=1):
+    for block in blocks:
         q = parse_single_question_block(block)
         if q:
             parsed_questions.append(q)
-        else:
-            if "✅" not in block:
-                errors.append(f"Block #{idx}: Missing correct option checkmark (✅).")
-            else:
-                errors.append(f"Block #{idx}: Could not parse options/question layout.")
 
     if not parsed_questions:
         q = parse_single_question_block(text)
         if q:
             parsed_questions.append(q)
-            errors = []
 
-    return parsed_questions, errors
+    return parsed_questions
