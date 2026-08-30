@@ -522,7 +522,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if chat.type != "private":
             logger.info(f"Triggering Quiz {quiz_id} setup wizard in group chat_id={chat.id}")
-            await send_launch_wizard_step1(context.bot, chat.id, quiz_data, update.message.message_id)
+            await send_launch_wizard_step1(context.bot, chat.id, quiz_data, update.message.message_id, initiator_user_id=user.id)
             return
 
         await send_quiz_created_screen(update, context, quiz_data)
@@ -1702,10 +1702,12 @@ async def done_edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    try:
-        await query.answer()
-    except Exception as e:
-        logger.warning(f"[API TIMEOUT/ERROR] query.answer() non-fatal exception: {e}")
+    # Defer query.answer() for qw_ callbacks so initiator lock can send show_alert
+    if not query.data.startswith("qw_"):
+        try:
+            await query.answer()
+        except Exception as e:
+            logger.warning(f"[API TIMEOUT/ERROR] query.answer() non-fatal exception: {e}")
 
     user = query.from_user
     logger.info(f"Callback received: {query.data} from user_id={user.id}")
@@ -1715,6 +1717,22 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     if data.startswith("qw_"):
         wizard_key = f"{query.message.chat_id}_{query.message.message_id}"
         session = group_wizard_sessions.get(wizard_key)
+
+        # Initiator Lock: only the user who launched the quiz (or owner) can configure
+        if session:
+            initiator_id = session.get("initiator_id")
+            if initiator_id is not None and user.id != initiator_id and not is_owner(user.id):
+                try:
+                    await query.answer("❌ Only the quiz initiator can configure this.", show_alert=True)
+                except Exception:
+                    pass
+                return
+
+        # Authorized user — answer the callback
+        try:
+            await query.answer()
+        except Exception:
+            pass
 
         if data.startswith("qw_quick_"):
             quiz_id = data.replace("qw_quick_", "").strip()
@@ -1945,7 +1963,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         target_group = config.GROUP_ID
         logger.info(f"Triggering Quiz {quiz_id} setup wizard in default GROUP_ID={target_group}")
 
-        await send_launch_wizard_step1(context.bot, target_group, quiz_data)
+        await send_launch_wizard_step1(context.bot, target_group, quiz_data, initiator_user_id=user.id)
         await query.message.reply_text(f"🚀 Quiz '{quiz_data['name']}' setup wizard sent to default group ({target_group})!")
         return
 
@@ -2195,7 +2213,7 @@ async def chat_shared_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"🚀 Quiz '{quiz_data['name']}' setup wizard sent to selected group (`{selected_group_id}`)!",
         reply_markup=ReplyKeyboardRemove()
     )
-    await send_launch_wizard_step1(context.bot, selected_group_id, quiz_data)
+    await send_launch_wizard_step1(context.bot, selected_group_id, quiz_data, initiator_user_id=user.id)
 
 
 # ==========================================
@@ -2229,7 +2247,7 @@ def save_last_settings(user_id: int, chat_id: int, timer: int, mark: float):
     user_last_launch_settings[user_id] = setting
     group_last_launch_settings[chat_id] = setting
 
-async def send_launch_wizard_step1(bot, group_id: int, quiz_data: dict, reply_to_msg_id: int = None):
+async def send_launch_wizard_step1(bot, group_id: int, quiz_data: dict, reply_to_msg_id: int = None, initiator_user_id: int = None):
     quiz_id = quiz_data["quiz_id"]
     default_timer = quiz_data.get("timer", 20)
     
@@ -2273,7 +2291,8 @@ async def send_launch_wizard_step1(bot, group_id: int, quiz_data: dict, reply_to
         "quiz_id": quiz_id,
         "correct_mark": 1.0,
         "timer": default_timer,
-        "step": "WAITING_MARKS"
+        "step": "WAITING_MARKS",
+        "initiator_id": initiator_user_id
     }
     return msg
 
