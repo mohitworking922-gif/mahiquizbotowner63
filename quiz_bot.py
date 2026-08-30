@@ -710,6 +710,73 @@ async def handle_private_photo(update: Update, context: ContextTypes.DEFAULT_TYP
         )
 
 
+async def handle_private_poll(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    chat = update.effective_chat
+    
+    if not user or chat.type != "private":
+        return
+
+    state = user_states.get(user.id)
+    if not state:
+        if is_owner(user.id):
+            await update.message.reply_text("Send /start to create a new Quiz or /edit to edit one.")
+        return
+
+    step = state.get("step")
+    if step not in ["WAITING_QUESTIONS", "EDIT_ADD_QUESTIONS"]:
+        await update.message.reply_text("❌ Poll is not expected at this step.")
+        return
+
+    poll = update.message.poll
+    if not poll:
+        return
+
+    question_text = poll.question.strip() if poll.question else ""
+    raw_options = poll.options or []
+    options = [opt.text.strip() for opt in raw_options if opt.text]
+    correct_id = poll.correct_option_id
+
+    if not question_text or len(options) < 2:
+        await update.message.reply_text("❌ Poll must have a valid question text and at least 2 options.")
+        return
+
+    if correct_id is None or correct_id < 0 or correct_id >= len(options):
+        correct_id = 0
+
+    q_dict = {
+        "question_text": question_text,
+        "options": options,
+        "correct_option_id": correct_id
+    }
+    if poll.explanation:
+        q_dict["explanation"] = poll.explanation.strip()[:200]
+
+    pending_photo_id = state.pop("pending_photo_id", None)
+    if pending_photo_id:
+        q_dict["photo_file_id"] = pending_photo_id
+
+    if step == "WAITING_QUESTIONS":
+        questions = state.get("questions", [])
+        questions.append(q_dict)
+        state["questions"] = questions
+        await update.message.reply_text(
+            f"✅ {len(questions)} saved! Send more or /done"
+        )
+    elif step == "EDIT_ADD_QUESTIONS":
+        quiz_id = state.get("quiz_id")
+        quiz_data = db.get_quiz(quiz_id)
+        if quiz_data:
+            questions = quiz_data.get("questions", [])
+            questions.append(q_dict)
+            db.update_quiz_questions(quiz_id, questions)
+            await update.message.reply_text(
+                f"✅ Added 1 question! Total: {len(questions)}. Send more or type /done_edit"
+            )
+        else:
+            await update.message.reply_text("❌ Quiz not found.")
+
+
 # ==========================================
 # MESSAGE HANDLER FOR QUIZ CREATION
 # ==========================================
@@ -2797,6 +2864,7 @@ def main():
     app.add_handler(PollAnswerHandler(handle_poll_answer))
     app.add_handler(MessageHandler(filters.StatusUpdate.CHAT_SHARED, chat_shared_handler))
     app.add_handler(MessageHandler(filters.PHOTO, handle_private_photo))
+    app.add_handler(MessageHandler(filters.POLL, handle_private_poll))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_private_document))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_private_message))
 
