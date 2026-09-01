@@ -2742,23 +2742,25 @@ async def send_quiz_leaderboard(bot, group_id: int, session: dict):
     # Process score, accuracy, and format participant list
     formatted_participants = []
     for p in participants:
-        correct = p["correct"]
-        wrong = max(0, total_q - correct) if total_q > 0 else 0
-        attempted = len(p["attempted_set"])
-        score = float(correct) - (float(p.get("wrong", 0)) * neg_rate)
-        total_time = p["total_time"]
-        accuracy = (correct / total_q * 100.0) if total_q > 0 else 0.0
-        percentage = accuracy
+        correct = p.get("correct", 0)
+        wrong = p.get("wrong", 0)
+        attempted = correct + wrong
+        unanswered = max(0, total_q - attempted) if total_q > 0 else 0
+
+        score = float(correct) - (float(wrong) * neg_rate)
+        total_time = p.get("total_time", 0.0)
+        score_pct = (correct / total_q * 100.0) if total_q > 0 else 0.0
+        accuracy = (correct / attempted * 100.0) if attempted > 0 else 0.0
 
         p_info = {
-            "name": p["name"],
+            "name": p.get("name", "User"),
             "correct": correct,
             "wrong": wrong,
+            "unanswered": unanswered,
             "score": score,
             "total_time": total_time,
+            "score_pct": score_pct,
             "accuracy": accuracy,
-            "percentage": percentage,
-            "performance": accuracy,
             "attempted": attempted
         }
         formatted_participants.append(p_info)
@@ -2777,8 +2779,8 @@ async def send_quiz_leaderboard(bot, group_id: int, session: dict):
         badge = rank_emojis.get(idx, f"{idx}.")
         time_str = format_time(p["total_time"])
         line = (
-            f"{badge} {p['name']} | ✅ {p['correct']} | ❌ {p['wrong']} | 🎯 {p['score']:.2f} | "
-            f"⏱️ {time_str} | 📊 {p['percentage']:.1f}% | 🚀 {p['accuracy']:.1f}%\n"
+            f"{badge} {p['name']} | ✅ {p['correct']} | ❌ {p['wrong']} | ⏭️ {p['unanswered']} | "
+            f"🎯 {p['score']:.2f} | ⏱️ {time_str} | 📊 {p['score_pct']:.1f}% | 🚀 {p['accuracy']:.1f}%\n"
             f"────────────────"
         )
         msg_lines.append(line)
