@@ -2743,12 +2743,12 @@ async def send_quiz_leaderboard(bot, group_id: int, session: dict):
     formatted_participants = []
     for p in participants:
         correct = p["correct"]
-        wrong = p["wrong"]
+        wrong = max(0, total_q - correct) if total_q > 0 else 0
         attempted = len(p["attempted_set"])
-        score = float(correct) - (float(wrong) * neg_rate)
+        score = float(correct) - (float(p.get("wrong", 0)) * neg_rate)
         total_time = p["total_time"]
         accuracy = (correct / total_q * 100.0) if total_q > 0 else 0.0
-        perf = (correct / attempted * 100.0) if attempted > 0 else 0.0
+        percentage = accuracy
 
         p_info = {
             "name": p["name"],
@@ -2757,13 +2757,14 @@ async def send_quiz_leaderboard(bot, group_id: int, session: dict):
             "score": score,
             "total_time": total_time,
             "accuracy": accuracy,
-            "performance": perf,
+            "percentage": percentage,
+            "performance": accuracy,
             "attempted": attempted
         }
         formatted_participants.append(p_info)
 
-    # Sorting criteria: 1. Score desc, 2. Performance desc, 3. Total Time asc
-    sorted_p = sorted(formatted_participants, key=lambda x: (-x["score"], -x["performance"], x["total_time"]))
+    # Sorting criteria: 1. Score desc, 2. Accuracy desc, 3. Total Time asc
+    sorted_p = sorted(formatted_participants, key=lambda x: (-x["score"], -x["accuracy"], x["total_time"]))
 
     msg_lines = [
         "🏁 Quiz Completed!\n",
@@ -2777,7 +2778,7 @@ async def send_quiz_leaderboard(bot, group_id: int, session: dict):
         time_str = format_time(p["total_time"])
         line = (
             f"{badge} {p['name']} | ✅ {p['correct']} | ❌ {p['wrong']} | 🎯 {p['score']:.2f} | "
-            f"⏱️ {time_str} | 📊 {p['accuracy']:.1f}% | 🚀 {p['performance']:.1f}%\n"
+            f"⏱️ {time_str} | 📊 {p['percentage']:.1f}% | 🚀 {p['accuracy']:.1f}%\n"
             f"────────────────"
         )
         msg_lines.append(line)
