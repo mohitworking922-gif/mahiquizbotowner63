@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 import quiz_bot
 
@@ -9,6 +9,7 @@ async def run_all_tests():
 
     mock_bot = MagicMock()
     mock_bot.send_message = AsyncMock()
+    mock_bot.send_photo = AsyncMock()
 
     # TEST CASE 1: Partial Attempt with 100% Accuracy (User Example)
     print("\n--- [TEST CASE 1] Partial Attempt with 100% Accuracy (36 Qs) ---")
@@ -160,8 +161,80 @@ async def run_all_tests():
     assert "📊 85.0% | 🚀 89.5%" in text_100
     print("  ✅ 100-Question dynamic quiz passed: 85 Correct, 10 Wrong, 5 Unanswered -> 85.0% Score, 89.5% Accuracy")
 
+    # TEST CASE 6: Custom Correct Mark (2.0 Marks per question)
+    print("\n--- [TEST CASE 6] Custom Correct Mark (2.0 Marks/Q) ---")
+    mock_bot.send_message.reset_mock()
+    session_6 = {
+        "name": "Custom Marks Quiz",
+        "total_questions": 10,
+        "correct_mark": 2.0,
+        "quiz_id": None,
+        "participants": {
+            61: {"user_id": 61, "name": "User 2Marks", "correct": 8, "wrong": 1, "attempted_set": set(range(9)), "total_time": 60.0}
+        }
+    }
+    await quiz_bot.send_quiz_leaderboard(mock_bot, -1008, session_6)
+    text_6 = mock_bot.send_message.call_args[1]["text"]
+    print(text_6)
+    # Correct=8 (*2=16.0 score), Wrong=1, Unanswered=1. Max score = 20. Score %= 16/20*100 = 80.0%, Accuracy = 8/9*100 = 88.9%
+    assert "✅ 8 | ❌ 1 | ⏭️ 1" in text_6
+    assert "🎯 16.00" in text_6
+    assert "📊 80.0% | 🚀 88.9%" in text_6
+    print("✅ TEST CASE 6 PASSED: Correct Mark 2.0 -> Score 16.00, Score% 80.0%, Accuracy 88.9%")
+
+    # TEST CASE 7: Negative Marking (0.50 per wrong answer)
+    print("\n--- [TEST CASE 7] Negative Marking (0.50 per wrong) ---")
+    mock_bot.send_message.reset_mock()
+    mock_db_quiz = {"negative": 0.5}
+    old_get_quiz = quiz_bot.db.get_quiz
+    quiz_bot.db.get_quiz = lambda q_id: mock_db_quiz
+    try:
+        session_7 = {
+            "name": "Negative Marking Quiz",
+            "total_questions": 10,
+            "correct_mark": 1.0,
+            "quiz_id": "MOCK_NEG_QUIZ",
+            "participants": {
+                71: {"user_id": 71, "name": "User Neg", "correct": 8, "wrong": 2, "attempted_set": set(range(10)), "total_time": 80.0}
+            }
+        }
+        await quiz_bot.send_quiz_leaderboard(mock_bot, -1009, session_7)
+        text_7 = mock_bot.send_message.call_args[1]["text"]
+        print(text_7)
+        # Score = (8 * 1.0) - (2 * 0.5) = 7.00. Max score = 10. Score% = 70.0%, Accuracy = 8/10*100 = 80.0%
+        assert "✅ 8 | ❌ 2 | ⏭️ 0" in text_7
+        assert "🎯 7.00" in text_7
+        assert "📊 70.0% | 🚀 80.0%" in text_7
+        print("✅ TEST CASE 7 PASSED: 8 Correct, 2 Wrong (-0.5 neg) -> Score 7.00, Score% 70.0%, Accuracy 80.0%")
+    finally:
+        quiz_bot.db.get_quiz = old_get_quiz
+
+    # TEST CASE 8: Early Stopped Quiz (Stopped at Q10 out of 50)
+    print("\n--- [TEST CASE 8] Early Stopped Quiz (Q10 of 50 asked) ---")
+    mock_bot.send_message.reset_mock()
+    session_8 = {
+        "name": "Stopped Quiz",
+        "total_questions": 50,
+        "questions_asked": 10,
+        "stopped": True,
+        "correct_mark": 1.0,
+        "quiz_id": None,
+        "participants": {
+            81: {"user_id": 81, "name": "User Stopped", "correct": 7, "wrong": 2, "attempted_set": set(range(9)), "total_time": 40.0}
+        }
+    }
+    await quiz_bot.send_quiz_leaderboard(mock_bot, -1010, session_8)
+    text_8 = mock_bot.send_message.call_args[1]["text"]
+    print(text_8)
+    # Total Qs asked = 10. Attempted = 9 (7 correct, 2 wrong). Unanswered = 10 - 9 = 1.
+    # Score = 7.00. Score% = 7/10*100 = 70.0%. Accuracy = 7/9*100 = 77.8%
+    assert "✅ 7 | ❌ 2 | ⏭️ 1" in text_8
+    assert "🎯 7.00" in text_8
+    assert "📊 70.0% | 🚀 77.8%" in text_8
+    print("✅ TEST CASE 8 PASSED: Early Stopped Quiz uses questions_asked=10 -> 1 Unanswered, 70.0% Score%, 77.8% Accuracy")
+
     print("\n" + "=" * 65)
-    print("🎉 ALL 5 TEST CASES COMPLETED & PASSED WITH 100% SUCCESS!")
+    print("🎉 ALL 8 TEST CASES COMPLETED & PASSED WITH 100% SUCCESS!")
     print("=" * 65)
 
 if __name__ == "__main__":

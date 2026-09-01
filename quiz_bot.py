@@ -2397,6 +2397,9 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
             if active_session.get("stopped", False):
                 break
 
+            # Track questions_asked in session for accurate unanswered calculation if quiz is stopped early
+            active_session["questions_asked"] = idx
+
             try:
                 t_prep_start = time.monotonic()
                 q_item = questions[idx - 1]
@@ -2632,6 +2635,9 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                     pass
                 idx += 1  # Always advance to next question so quiz NEVER hangs
 
+        # Short grace delay so any last-second poll answers from Telegram API register
+        await asyncio.sleep(1.0)
+
         # 3. Finalize Quiz and Send Leaderboard
         if active_session.get("stopped", False):
             await bot.send_message(chat_id=group_id, text="⏹️ Quiz Stopped! Calculating results for attempted questions...")
@@ -2724,9 +2730,17 @@ async def send_quiz_leaderboard(bot, group_id: int, session: dict):
     session["leaderboard_sent"] = True
 
     participants = list(session["participants"].values())
+    
+    # For early-stopped quizzes or normal quizzes, use actual questions asked if available
     total_q = session["total_questions"]
+    if session.get("stopped", False) and "questions_asked" in session:
+        total_q = session["questions_asked"]
+    elif "questions_asked" in session and session["questions_asked"] > 0:
+        total_q = session["questions_asked"]
+
     quiz_name = session.get("name", "Quiz")
     quiz_id = session.get("quiz_id")
+    correct_mark = float(session.get("correct_mark", 1.0))
 
     # Fetch quiz negative marking setting
     quiz_data = db.get_quiz(quiz_id) if quiz_id else None
@@ -2741,16 +2755,23 @@ async def send_quiz_leaderboard(bot, group_id: int, session: dict):
 
     # Process score, accuracy, and format participant list
     formatted_participants = []
+    max_possible_score = float(total_q) * correct_mark
+
     for p in participants:
-        correct = p.get("correct", 0)
-        wrong = p.get("wrong", 0)
+        correct = int(p.get("correct", 0))
+        wrong = int(p.get("wrong", 0))
         attempted = correct + wrong
         unanswered = max(0, total_q - attempted) if total_q > 0 else 0
 
-        score = float(correct) - (float(wrong) * neg_rate)
-        total_time = p.get("total_time", 0.0)
-        score_pct = (correct / total_q * 100.0) if total_q > 0 else 0.0
-        accuracy = (correct / attempted * 100.0) if attempted > 0 else 0.0
+        # Score = (Correct × Correct Mark) - (Wrong × Negative Mark)
+        score = (float(correct) * correct_mark) - (float(wrong) * neg_rate)
+        total_time = float(p.get("total_time", 0.0))
+        
+        # Score Percentage = max(0, Score) / Maximum Possible Score × 100
+        score_pct = (max(0.0, score) / max_possible_score * 100.0) if max_possible_score > 0 else 0.0
+        
+        # Accuracy = Correct / (Correct + Wrong) × 100
+        accuracy = (float(correct) / float(attempted) * 100.0) if attempted > 0 else 0.0
 
         p_info = {
             "name": p.get("name", "User"),
@@ -2767,6 +2788,15 @@ async def send_quiz_leaderboard(bot, group_id: int, session: dict):
 
     # Sorting criteria: 1. Score desc, 2. Accuracy desc, 3. Total Time asc
     sorted_p = sorted(formatted_participants, key=lambda x: (-x["score"], -x["accuracy"], x["total_time"]))
+
+    # Generate & Send Visual PNG Leaderboard Image Card first
+    try:
+        img_buf = generate_leaderboard_image(sorted_p, quiz_name=quiz_name, max_rows=15)
+        res = bot.send_photo(chat_id=group_id, photo=img_buf, caption=f"🏆 {quiz_name} — Official Leaderboard")
+        if asyncio.iscoroutine(res) or hasattr(res, "__await__"):
+            await res
+    except Exception as img_err:
+        logger.error(f"[quiz_id={quiz_id}] Failed to generate/send leaderboard image card: {img_err}")
 
     msg_lines = [
         "🏁 Quiz Completed!\n",
