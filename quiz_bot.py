@@ -2789,15 +2789,6 @@ async def send_quiz_leaderboard(bot, group_id: int, session: dict):
     # Sorting criteria: 1. Score desc, 2. Accuracy desc, 3. Total Time asc
     sorted_p = sorted(formatted_participants, key=lambda x: (-x["score"], -x["accuracy"], x["total_time"]))
 
-    # Generate & Send Visual PNG Leaderboard Image Card first
-    try:
-        img_buf = generate_leaderboard_image(sorted_p, quiz_name=quiz_name, max_rows=15)
-        res = bot.send_photo(chat_id=group_id, photo=img_buf, caption=f"🏆 {quiz_name} — Official Leaderboard")
-        if asyncio.iscoroutine(res) or hasattr(res, "__await__"):
-            await res
-    except Exception as img_err:
-        logger.error(f"[quiz_id={quiz_id}] Failed to generate/send leaderboard image card: {img_err}")
-
     msg_lines = [
         "🏁 Quiz Completed!\n",
         f"📝 {quiz_name}\n",
