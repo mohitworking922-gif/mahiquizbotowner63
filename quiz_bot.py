@@ -3003,16 +3003,22 @@ async def clone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="HTML"
             )
     else:
-        # Fallback guidance when MTProto worker is not configured
+        status = config.get_mtproto_status()
+        api_id_status = "✅ YES" if status["API_ID_SET"] else "❌ NO (Missing TELEGRAM_API_ID)"
+        api_hash_status = "✅ YES" if status["API_HASH_SET"] else "❌ NO (Missing TELEGRAM_API_HASH)"
+        session_status = "✅ YES" if status["SESSION_SET"] else "❌ NO (Missing MTPROTO_SESSION_STRING)"
+
+        logger.info(f"[CLONE CONFIG DIAGNOSTIC] API_ID: {api_id_status} | API_HASH: {api_hash_status} | SESSION: {session_status}")
+
         await status_msg.edit_text(
             f"🚀 <b>Quiz Token Extracted:</b> <code>{token}</code>\n"
             f"<b>Title:</b> {html.escape(title)}\n"
             f"<b>Questions:</b> {q_count} | <b>Time:</b> {time_limit}s\n\n"
-            f"⚠️ <b>MTProto Worker Not Configured in .env</b>\n"
-            f"To enable 100% automated sequential cloning of all {q_count} questions via userbot, add your credentials to <code>.env</code>:\n"
-            f"• <code>TELEGRAM_API_ID</code>\n"
-            f"• <code>TELEGRAM_API_HASH</code>\n"
-            f"• <code>MTPROTO_SESSION_STRING</code>",
+            f"⚠️ <b>MTProto Environment Diagnostics:</b>\n"
+            f"• <code>TELEGRAM_API_ID</code>: {api_id_status}\n"
+            f"• <code>TELEGRAM_API_HASH</code>: {api_hash_status}\n"
+            f"• <code>MTPROTO_SESSION_STRING</code>: {session_status}\n\n"
+            f"<i>Configure missing variable(s) in Railway Dashboard ➔ Variables tab.</i>",
             parse_mode="HTML"
         )
 

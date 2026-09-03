@@ -26,3 +26,11 @@ except ValueError:
 
 TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH", "").strip()
 MTPROTO_SESSION_STRING = os.getenv("MTPROTO_SESSION_STRING", "").strip()
+
+# Safe Diagnostic Status Helper (Prints ONLY YES/NO)
+def get_mtproto_status() -> dict:
+    return {
+        "API_ID_SET": TELEGRAM_API_ID > 0,
+        "API_HASH_SET": bool(TELEGRAM_API_HASH),
+        "SESSION_SET": bool(MTPROTO_SESSION_STRING)
+    }
