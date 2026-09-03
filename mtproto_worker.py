@@ -63,8 +63,9 @@ async def clone_quiz_from_token(
     total_q_detected = 35
 
     try:
+        logger.info("[CLONE DEBUG 3/4] MTProto worker starting Pyrogram client...")
         await app.start()
-        logger.info("MTProto worker client started successfully.")
+        logger.info("[CLONE DEBUG 4/4] Pyrogram client started. Sending /start to @QuizBot...")
 
         quiz_bot = "QuizBot"
         

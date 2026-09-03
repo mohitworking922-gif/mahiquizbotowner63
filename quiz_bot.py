@@ -3,6 +3,7 @@ import html
 import logging
 import math
 import os
+import re
 import time
 import httpx
 from typing import Dict, Any
@@ -2910,12 +2911,19 @@ async def clone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if m:
                         token = m.group(1)
                 elif btn.switch_inline_query:
-                    token = btn.switch_inline_query.strip()
+                    raw_siq = btn.switch_inline_query.strip()
+                    token = re.sub(r'^(?:quiz:|start:)', '', raw_siq, flags=re.IGNORECASE).strip()
 
     if not token and target_msg.text:
-        m = re.search(r'(?:QuizBot\?(?:start|startgroup)=|token:?\s*)([a-zA-Z0-9_\-]+)', target_msg.text, re.IGNORECASE)
+        m = re.search(r'(?:QuizBot\?(?:start|startgroup)=|token:?\s*|quiz:)([a-zA-Z0-9_\-]+)', target_msg.text, re.IGNORECASE)
         if m:
             token = m.group(1)
+
+    if token:
+        token = re.sub(r'^(?:quiz:|start:)', '', token, flags=re.IGNORECASE).strip()
+
+    logger.info(f"[CLONE DEBUG 1/4] /clone received | Target msg present: {target_msg is not None}")
+    logger.info(f"[CLONE DEBUG 2/4] Extracted token: {token}")
 
     if not token:
         await msg.reply_text(
