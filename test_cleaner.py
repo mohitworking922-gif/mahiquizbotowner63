@@ -56,4 +56,11 @@ print(f"Sample 6 Cleaned Result:\n'{res_6}'\n")
 expected_6 = 'हाल ही में चर्चा में रही मैगी हेरमेन और जोनाथन स्वान की "Regime Change" पुस्तक का संबंध किससे है?'
 assert res_6 == expected_6, f"Test 6 Failed!\nExpected: '{expected_6}'\nGot:      '{res_6}'"
 
+# Test 7: Second Real Telegram Poll sample (Ramon Magsaysay 2026 sample)
+sample_7 = '[1/11] [1/55] ✱✍️ हाल ही में रेमन मैगसेसे पुरस्कार 2026 के लिए किसे चुना गया है?\n\n♡◄••───○ ⇣sᴏɴηᴀᴍ⤾○───••► ♡'
+res_7 = clean_question_text(sample_7)
+print(f"Sample 7 Cleaned Result:\n'{res_7}'\n")
+expected_7 = 'हाल ही में रेमन मैगसेसे पुरस्कार 2026 के लिए किसे चुना गया है?'
+assert res_7 == expected_7, f"Test 7 Failed!\nExpected: '{expected_7}'\nGot:      '{res_7}'"
+
 print("🎉 ALL TESTS PASSED PERFECTLY!")

@@ -34,7 +34,7 @@ from telegram.error import RetryAfter, TimedOut, NetworkError
 
 import config
 import db
-from parser import parse_questions_message
+from parser import parse_questions_message, clean_question_text
 from leaderboard_image import generate_leaderboard_image
 
 import sys
@@ -732,7 +732,8 @@ async def handle_private_poll(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not poll:
         return
 
-    question_text = poll.question.strip() if poll.question else ""
+    raw_question = poll.question.strip() if poll.question else ""
+    question_text = clean_question_text(raw_question)
     raw_options = poll.options or []
     options = [opt.text.strip() for opt in raw_options if opt.text]
     correct_id = poll.correct_option_id
@@ -2411,9 +2412,29 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                     idx += 1
                     continue
 
-                raw_question = q_item.get("question_text", "")
-                options = q_item.get("options", [])
-                correct_id = q_item.get("correct_option_id", 0)
+                raw_question = clean_question_text(str(q_item.get("question_text", "")).strip())
+                if not raw_question:
+                    raw_question = f"Question {idx}"
+
+                raw_opts = q_item.get("options", [])
+                if not isinstance(raw_opts, list):
+                    raw_opts = [str(raw_opts)]
+
+                options = [str(opt).strip() for opt in raw_opts if str(opt).strip()]
+                if len(options) < 2:
+                    while len(options) < 2:
+                        options.append(f"Option {len(options)+1}")
+                if len(options) > 10:
+                    options = options[:10]
+
+                try:
+                    correct_id = int(q_item.get("correct_option_id", 0))
+                except Exception:
+                    correct_id = 0
+
+                if correct_id < 0 or correct_id >= len(options):
+                    correct_id = 0
+
                 print(f"[QUIZ TIMING] Q{idx} question preparation: {((time.monotonic() - t_prep_start) * 1000.0):.2f}ms", flush=True)
 
                 # Section Transition check before question starts
@@ -2511,7 +2532,7 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
 
                 # Send poll with robust retry & RetryAfter handling
                 poll_msg = None
-                poll_attempts = 7
+                poll_attempts = 4
                 current_wait = active_session.get("timer", timer)
                 open_p = min(max(5, int(current_wait)), 600)
                 q_text = f"[{idx}/{total_q}] {raw_question}"
@@ -2547,16 +2568,21 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                     except RetryAfter as e:
                         retry_wait = float(e.retry_after)
                         logger.warning(f"[quiz_id={quiz_id}] Telegram Rate Limit (429) for Q{idx}. Waiting {retry_wait}s (attempt {attempt}/{poll_attempts})...")
+                        if retry_wait >= 5.0:
+                            try:
+                                await bot.send_message(chat_id=group_id, text=f"⏳ Telegram rate limit active: waiting {int(retry_wait)}s for Q{idx}...")
+                            except Exception:
+                                pass
                         await asyncio.sleep(retry_wait)
                     except Exception as e:
                         logger.error(f"[quiz_id={quiz_id}] Error sending poll Q{idx} (attempt {attempt}/{poll_attempts}): {e}")
                         if attempt < poll_attempts:
-                            backoff = min(2.0, 0.3 * attempt)
+                            backoff = min(1.5, 0.3 * attempt)
                             await asyncio.sleep(backoff)
                         else:
                             logger.error(f"[quiz_id={quiz_id}] Failed to send poll for Q{idx} after {poll_attempts} attempts. Skipping question.")
                             try:
-                                await bot.send_message(chat_id=group_id, text=f"⚠️ Question {idx} skipped (network/API error). Moving to next question...")
+                                await bot.send_message(chat_id=group_id, text=f"⚠️ Question {idx} skipped due to Telegram network delay. Moving to next question...")
                             except Exception:
                                 pass
                             poll_msg = None
@@ -2713,7 +2739,12 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if "correct_q_indices" not in p_data:
             p_data["correct_q_indices"] = set()
 
-        if user_selected == correct_option_id:
+        try:
+            is_correct = int(user_selected) == int(correct_option_id)
+        except (ValueError, TypeError):
+            is_correct = str(user_selected).strip() == str(correct_option_id).strip()
+
+        if is_correct:
             p_data["correct"] += 1
             p_data["correct_q_indices"].add(q_idx)
         else:
@@ -2828,13 +2859,13 @@ quiz_engine_bot = None
 
 async def post_init(application):
     global quiz_engine_bot
-    limits = httpx.Limits(max_keepalive_connections=20, max_connections=40)
+    limits = httpx.Limits(max_keepalive_connections=30, max_connections=60)
     request = HTTPXRequest(
-        connection_pool_size=40,
-        connect_timeout=8.0,
-        read_timeout=8.0,
-        write_timeout=8.0,
-        pool_timeout=8.0,
+        connection_pool_size=60,
+        connect_timeout=15.0,
+        read_timeout=20.0,
+        write_timeout=20.0,
+        pool_timeout=15.0,
         httpx_kwargs={"limits": limits}
     )
     quiz_engine_bot = Bot(token=config.BOT_TOKEN, request=request)
@@ -2861,13 +2892,13 @@ def main():
         print("❌ ERROR: BOT_TOKEN is missing! Please set BOT_TOKEN in .env or environment variable.")
         return
 
-    limits = httpx.Limits(max_keepalive_connections=20, max_connections=40)
+    limits = httpx.Limits(max_keepalive_connections=30, max_connections=60)
     request = HTTPXRequest(
-        connection_pool_size=40,
-        connect_timeout=8.0,
-        read_timeout=8.0,
-        write_timeout=8.0,
-        pool_timeout=8.0,
+        connection_pool_size=60,
+        connect_timeout=15.0,
+        read_timeout=20.0,
+        write_timeout=20.0,
+        pool_timeout=15.0,
         httpx_kwargs={"limits": limits}
     )
 
