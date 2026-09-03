@@ -34,6 +34,7 @@ from telegram.error import RetryAfter, TimedOut, NetworkError
 
 import config
 import db
+import mtproto_worker
 from parser import parse_questions_message, clean_question_text
 from leaderboard_image import generate_leaderboard_image
 
@@ -2884,6 +2885,129 @@ async def post_shutdown(application):
             pass
 
 
+async def clone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    msg = update.message
+    if not user or not msg:
+        return
+
+    target_msg = msg.reply_to_message if msg.reply_to_message else msg
+
+    # Log incoming message structure for debugging
+    logger.info("=== QUIZ CLONE DEBUG LOG ===")
+    logger.info(f"User ID: {user.id}")
+    logger.info(f"Message Text: {repr(target_msg.text)}")
+    logger.info(f"Via Bot: {target_msg.via_bot.username if target_msg.via_bot else None}")
+
+    token = None
+    # Extract token from reply_markup or text
+    if target_msg.reply_markup and target_msg.reply_markup.inline_keyboard:
+        logger.info(f"Reply Markup: {target_msg.reply_markup.to_dict()}")
+        for row in target_msg.reply_markup.inline_keyboard:
+            for btn in row:
+                if btn.url and ("QuizBot?start=" in btn.url or "QuizBot?startgroup=" in btn.url):
+                    m = re.search(r't\.me/QuizBot\?(?:start|startgroup)=([a-zA-Z0-9_\-]+)', btn.url, re.IGNORECASE)
+                    if m:
+                        token = m.group(1)
+                elif btn.switch_inline_query:
+                    token = btn.switch_inline_query.strip()
+
+    if not token and target_msg.text:
+        m = re.search(r'(?:QuizBot\?(?:start|startgroup)=|token:?\s*)([a-zA-Z0-9_\-]+)', target_msg.text, re.IGNORECASE)
+        if m:
+            token = m.group(1)
+
+    if not token:
+        await msg.reply_text(
+            "⚠️ <b>Quiz Token Not Found!</b>\n\n"
+            "Please reply to a <code>@QuizBot</code> shared message with <code>/clone</code>, "
+            "or send the <code>t.me/QuizBot?start=...</code> link.",
+            parse_mode="HTML"
+        )
+        return
+
+    # Extract Title and Questions count if present
+    text = target_msg.text or ""
+    title_match = re.search(r"Quiz\s*['\"](.*?)['\"]", text, re.DOTALL)
+    q_count_match = re.search(r"(\d+)\s*questions", text, re.IGNORECASE)
+    time_match = re.search(r"(\d+)\s*sec", text, re.IGNORECASE)
+
+    title = title_match.group(1).strip() if title_match else "QuizBot Quiz"
+    q_count = q_count_match.group(1) if q_count_match else "35"
+    time_limit = time_match.group(1) if time_match else "15"
+
+    logger.info(f"Extracted QuizBot Token: {token} | Title: {title} | Count: {q_count}")
+
+    status_msg = await msg.reply_text(
+        f"🚀 <b>Connecting...</b>\n"
+        f"<b>Token:</b> <code>{token}</code>",
+        parse_mode="HTML"
+    )
+
+    last_update_time = time.monotonic()
+
+    async def on_progress(current: int, total: int, tok: str):
+        nonlocal last_update_time
+        now = time.monotonic()
+        if now - last_update_time < 2.0 and current < total:
+            return
+        last_update_time = now
+        bar = mtproto_worker.format_progress_bar(current, total)
+        eta = mtproto_worker.format_eta(current, total)
+        text_update = (
+            f"🔄 <b>Cloning...</b>\n"
+            f"{bar}\n"
+            f"📊 <b>{current}/{total}</b>\n"
+            f"⏱️ <b>ETA:</b> {eta}"
+        )
+        try:
+            await status_msg.edit_text(text_update, parse_mode="HTML")
+        except Exception:
+            pass
+
+    if mtproto_worker.is_mtproto_configured():
+        try:
+            questions = await mtproto_worker.clone_quiz_from_token(token, progress_callback=on_progress)
+            if questions:
+                try:
+                    time_int = int(time_limit)
+                except ValueError:
+                    time_int = 15
+                quiz_id = db.save_quiz(title, time_int, questions, creator_name=user.first_name or "User", creator_id=user.id)
+                await status_msg.edit_text(
+                    f"✅ <b>Quiz Imported Successfully</b>\n\n"
+                    f"📚 <b>Questions:</b> {len(questions)}\n"
+                    f"⏱ <b>Time:</b> {time_limit} sec\n\n"
+                    f"<i>(Use <code>/myquizzes</code> to view or start this quiz!)</i>",
+                    parse_mode="HTML"
+                )
+            else:
+                await status_msg.edit_text(
+                    f"❌ <b>Quiz Import Failed</b>\n\n"
+                    f"Reason: No questions could be retrieved from @QuizBot.",
+                    parse_mode="HTML"
+                )
+        except Exception as e:
+            logger.error(f"Clone error for user {user.id}: {e}")
+            await status_msg.edit_text(
+                f"⚠️ <b>Cloning Error:</b> {html.escape(str(e))}\n\n"
+                f"<b>Quiz Token:</b> <code>{token}</code>",
+                parse_mode="HTML"
+            )
+    else:
+        # Fallback guidance when MTProto worker is not configured
+        await status_msg.edit_text(
+            f"🚀 <b>Quiz Token Extracted:</b> <code>{token}</code>\n"
+            f"<b>Title:</b> {html.escape(title)}\n"
+            f"<b>Questions:</b> {q_count} | <b>Time:</b> {time_limit}s\n\n"
+            f"⚠️ <b>MTProto Worker Not Configured in .env</b>\n"
+            f"To enable 100% automated sequential cloning of all {q_count} questions via userbot, add your credentials to <code>.env</code>:\n"
+            f"• <code>TELEGRAM_API_ID</code>\n"
+            f"• <code>TELEGRAM_API_HASH</code>\n"
+            f"• <code>MTPROTO_SESSION_STRING</code>",
+            parse_mode="HTML"
+        )
+
 def main():
     db.init_db()
 
@@ -2933,6 +3057,7 @@ def main():
     app.add_handler(CommandHandler("slow", slow_command))
     app.add_handler(CommandHandler("edit", edit_command))
     app.add_handler(CommandHandler("done_edit", done_edit_command))
+    app.add_handler(CommandHandler("clone", clone_command))
     app.add_handler(InlineQueryHandler(inline_query_handler))
     app.add_handler(CallbackQueryHandler(handle_callback_query))
     app.add_handler(PollAnswerHandler(handle_poll_answer))

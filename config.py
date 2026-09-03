@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+
 try:
     OWNER_ID = int(os.getenv("OWNER_ID", "0").strip())
 except ValueError:
@@ -16,3 +17,12 @@ except ValueError:
     GROUP_ID = 0
 
 LONG_QUESTION_THRESHOLD = int(os.getenv("LONG_QUESTION_THRESHOLD", "200").strip())
+
+# MTProto Userbot Client Configuration (for @QuizBot /clone feature)
+try:
+    TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID", "0").strip())
+except ValueError:
+    TELEGRAM_API_ID = 0
+
+TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH", "").strip()
+MTPROTO_SESSION_STRING = os.getenv("MTPROTO_SESSION_STRING", "").strip()
