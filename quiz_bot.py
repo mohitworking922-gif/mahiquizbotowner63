@@ -813,8 +813,9 @@ async def handle_private_message(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     elif step == "WAITING_QUESTIONS":
-        if not text:
+        if not text or text.startswith("/"):
             return
+
 
         parsed = parse_questions_message(text)
         if not parsed:
@@ -2891,6 +2892,10 @@ async def clone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not user or not msg:
         return
+
+    # Clear any pending interactive quiz creation state
+    user_states.pop(user.id, None)
+
 
     target_msg = msg.reply_to_message if msg.reply_to_message else msg
 
