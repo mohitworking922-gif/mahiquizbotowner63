@@ -2989,6 +2989,38 @@ async def clone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"<i>(Use <code>/myquizzes</code> to view or start this quiz!)</i>",
                     parse_mode="HTML"
                 )
+
+                # Generate and send TXT export file automatically
+                try:
+                    blocks = []
+                    for q in questions:
+                        clean_q = clean_question_text(q.get("question_text", ""))
+                        opts = [o.strip() for o in q.get("options", [])]
+                        correct_id = q.get("correct_option_id", 0)
+                        if 0 <= correct_id < len(opts):
+                            correct_ans = opts[correct_id]
+                        else:
+                            correct_ans = opts[0] if opts else ""
+                        block_lines = [clean_q] + opts + [f"Answer: {correct_ans}"]
+                        blocks.append("\n".join(block_lines))
+
+                    txt_content = "\n\n".join(blocks)
+                    txt_bytes = io.BytesIO(txt_content.encode("utf-8"))
+                    safe_title = re.sub(r'[^\w\s-]', '', title).strip().replace(' ', '_') or "quiz"
+                    filename = f"{safe_title}_{len(questions)}q.txt"
+                    txt_bytes.name = filename
+
+                    await msg.reply_document(
+                        document=txt_bytes,
+                        filename=filename,
+                        caption=f"📄 <b>TXT Export:</b> <code>{html.escape(title)}</code>\n"
+                                f"📚 <b>Questions:</b> {len(questions)}\n"
+                                f"🆔 <b>Quiz ID:</b> <code>{quiz_id}</code>",
+                        parse_mode="HTML"
+                    )
+                except Exception as doc_err:
+                    logger.warning(f"Failed to send TXT document: {doc_err}")
+
             else:
                 await status_msg.edit_text(
                     f"❌ <b>Quiz Import Failed</b>\n\n"
