@@ -1,11 +1,115 @@
 import re
 
+DECORATIVE_SYMBOLS = r'[\u2500-\u257F\u2580-\u259F\u25A0-\u25FF\u2600-\u27BF\u2B00-\u2BFF\u2190-\u21FF\u2E80-\u2FD5\u3000-\u303F♡♥★☆◄►▲▼•●○■□◆◇─━—~*_=\-/\\|ツ✿❀⇣⇡⇢⇠⤾⤿✨🔥🎯⚡👉▶️📌❓🔹🔸💡🚀💥🌟📢🚨]'
+FANCY_FONT_RANGES = r'[\U0001F100-\U0001F1FF\U0001D400-\U0001D7FF\u2460-\u24FF\u1D00-\u1D7F\u0250-\u02AF]'
+
+PROMO_KEYWORDS = re.compile(
+    r'(?:join|credit|by|follow|subscribe|channel|group|telegram|t\.me|http[s]?://|@\w+)',
+    re.IGNORECASE
+)
+
+def is_promotional_or_decorative_line(line: str) -> bool:
+    line_stripped = line.strip()
+    if not line_stripped:
+        return True
+
+    # If line contains link or telegram handle
+    if re.search(r'(?:https?://\S+|t\.me/\S+|telegram\.me/\S+|@\w+)', line_stripped, re.IGNORECASE):
+        clean = re.sub(r'(?:https?://\S+|t\.me/\S+|telegram\.me/\S+|@\w+)', '', line_stripped).strip()
+        if len(clean) < 15 or PROMO_KEYWORDS.search(line_stripped):
+            return True
+
+    # Count decorative symbols and fancy font characters
+    total_chars = len(line_stripped)
+    decor_count = len(re.findall(f'(?:{DECORATIVE_SYMBOLS}|{FANCY_FONT_RANGES})', line_stripped))
+
+    # If more than 35% of the line is decorative symbols or fancy font
+    if total_chars > 0 and (decor_count / total_chars) >= 0.35:
+        return True
+
+    # Short lines with promo keywords
+    if PROMO_KEYWORDS.search(line_stripped) and len(line_stripped) <= 60:
+        return True
+
+    return False
+
+def clean_question_text(text: str) -> str:
+    """
+    Cleans question text from forwarded polls and messages by removing:
+    - Leading counters/brackets ([49/55], Q1., 1., etc.)
+    - Leading emojis, symbols, and boxed/squared watermark logos (🔥, 🎯, 🅂🄺, 🅖🅚, etc.)
+    - Bottom promotional lines, channel names, and decorative borders (e.g. ♡◄••───○ ⇣sᴏɴηᴀᴍ⤾○───••► ♡, @channel, links)
+    """
+    if not text:
+        return ""
+
+    lines = [l for l in text.split("\n")]
+    cleaned_lines = []
+
+    for line in lines:
+        l = line.strip()
+        if not l:
+            continue
+        if is_promotional_or_decorative_line(l):
+            continue
+        cleaned_lines.append(l)
+
+    if not cleaned_lines:
+        cleaned_lines = [text.strip()]
+
+    result = "\n".join(cleaned_lines).strip()
+
+    # Clean trailing promo handles, links, and trailing decorative symbols/emojis
+    result = re.sub(r'\s*(?:(?:Join|By|Credit)?\s*@\w+|https?://\S+|t\.me/\S+)\s*$', '', result, flags=re.IGNORECASE).strip()
+
+    suffix_pattern = re.compile(rf'(?:{DECORATIVE_SYMBOLS}|{FANCY_FONT_RANGES}|\s)+$')
+    result = suffix_pattern.sub('', result).strip()
+
+    # Repeatedly strip leading counters, emojis, symbols, and boxed font characters
+    prefix_pattern = re.compile(
+        rf'^(?:'
+        rf'\s*\[\s*\d+\s*/\s*\d+\s*\]|'
+        rf'\s*\(\s*\d+\s*/\s*\d+\s*\)|'
+        rf'\s*\[\s*\d+\s*\]|'
+        rf'\s*Q(?:uestion)?\s*[\.\:\-]?\s*\d+\s*[\.\:\-\)]|'
+        rf'\s*Q(?:uestion)?\s*\d+|'
+        rf'\s*प्रश्न\s*[\.\:\-]?\s*\d+\s*[\.\:\-\)]|'
+        rf'\s*प्र\.\s*\d+\s*[\.\:\-\)]|'
+        rf'\s*\d+\s*[\.\:\-\)]|'
+        rf'{DECORATIVE_SYMBOLS}|'
+        rf'{FANCY_FONT_RANGES}|'
+        rf'\s'
+        rf')+',
+        re.IGNORECASE
+    )
+
+    prev = None
+    while result != prev:
+        prev = result
+        result = prefix_pattern.sub('', result).strip()
+
+    # Re-clean trailing symbols in case stripping prefix revealed trailing emojis
+    result = suffix_pattern.sub('', result).strip()
+
+    return result
+
 def parse_single_question_block(block_text: str):
     """
     Parses a single block of text containing question lines followed by options and optional Ex/Explanation lines.
     Returns dict: {"question_text": str, "options": list, "correct_option_id": int, "explanation": str} or None if invalid.
     """
     raw_lines = [line.strip() for line in block_text.strip().split("\n") if line.strip()]
+    if len(raw_lines) < 3:
+        return None
+
+    # Filter out standalone promotional/decorative lines (watermarks, borders, channel handles)
+    filtered_lines = []
+    for line in raw_lines:
+        if is_promotional_or_decorative_line(line):
+            continue
+        filtered_lines.append(line)
+    
+    raw_lines = filtered_lines
     if len(raw_lines) < 3:
         return None
 
@@ -59,7 +163,9 @@ def parse_single_question_block(block_text: str):
     if not question_lines or len(raw_options) < 2 or len(raw_options) > 10:
         return None
 
-    question_text = "\n".join(question_lines).strip()
+    question_text = clean_question_text("\n".join(question_lines).strip())
+    if not question_text:
+        return None
 
     correct_index = -1
     clean_options = []
