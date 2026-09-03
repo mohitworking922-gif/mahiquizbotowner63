@@ -102,15 +102,28 @@ async def clone_quiz_from_token(
         # Collect polls sequentially
         collected = 0
         consecutive_timeouts = 0
+        max_timeouts = 10
+        last_poll_msg_id = None
 
-        while collected < total_q_detected and consecutive_timeouts < 3:
+        while collected < total_q_detected and consecutive_timeouts < max_timeouts:
             latest_poll_msg = None
-            async for m in app.get_chat_history(quiz_bot, limit=3):
-                if m.poll:
+            async for m in app.get_chat_history(quiz_bot, limit=5):
+                if m.poll and m.id != last_poll_msg_id:
                     latest_poll_msg = m
                     break
+                inline_kb = getattr(m.reply_markup, 'inline_keyboard', None) if m.reply_markup else None
+                if inline_kb:
+                    for row in inline_kb:
+                        for btn in row:
+                            if btn.text and ("ready" in btn.text.lower() or "start" in btn.text.lower()):
+                                try:
+                                    await m.click(btn.text)
+                                    await asyncio.sleep(1.0)
+                                except Exception:
+                                    pass
 
             if latest_poll_msg and latest_poll_msg.poll:
+                last_poll_msg_id = latest_poll_msg.id
                 poll = latest_poll_msg.poll
                 raw_q = poll.question or f"Question {collected + 1}"
                 clean_q = clean_question_text(raw_q)
@@ -149,10 +162,11 @@ async def clone_quiz_from_token(
                     except Exception as p_err:
                         logger.warning(f"Progress callback error: {p_err}")
 
-                await asyncio.sleep(2.0)
+                await asyncio.sleep(1.5)
             else:
                 consecutive_timeouts += 1
                 await asyncio.sleep(2.0)
+
 
     except Exception as err:
         logger.error(f"MTProto worker cloning error: {err}")
