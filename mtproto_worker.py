@@ -88,10 +88,11 @@ async def clone_quiz_from_token(
 
         # Click 'I'm ready' button or send callback if present
         for m in history:
-            if m.reply_markup and m.reply_markup.inline_keyboard:
-                for row in m.reply_markup.inline_keyboard:
+            inline_kb = getattr(m.reply_markup, 'inline_keyboard', None) if m.reply_markup else None
+            if inline_kb:
+                for row in inline_kb:
                     for btn in row:
-                        if "ready" in btn.text.lower():
+                        if btn.text and "ready" in btn.text.lower():
                             try:
                                 await m.click(btn.text)
                                 await asyncio.sleep(1.0)
