@@ -1,7 +1,7 @@
 import re
 
-DECORATIVE_SYMBOLS = r'[\u2500-\u257F\u2580-\u259F\u25A0-\u25FF\u2600-\u27BF\u2B00-\u2BFF\u2190-\u21FF\u2E80-\u2FD5\u3000-\u303F♡♥★☆◄►▲▼•●○■□◆◇─━—~*_=\-/\\|ツ✿❀⇣⇡⇢⇠⤾⤿✨🔥🎯⚡👉▶️📌❓🔹🔸💡🚀💥🌟📢🚨]'
-FANCY_FONT_RANGES = r'[\U0001F100-\U0001F1FF\U0001D400-\U0001D7FF\u2460-\u24FF\u1D00-\u1D7F\u0250-\u02AF]'
+DECORATIVE_SYMBOLS = r'[\U0001F000-\U0001FFFF\u2600-\u27BF\u2300-\u23FF\u2B00-\u2BFF\u2500-\u259F\u25A0-\u25FF\u2190-\u21FF\u2900-\u297F\u2E80-\u2FD5\u3000-\u303F\uFE00-\uFE0F\u200D\u200C♡♥★☆◄►▲▼•●○■□◆◇─━—~*_=\-/\\|ツ✿❀⇣⇡⇢⇠⤾⤿▶️📌❓🔹🔸💡🚀💥🌟📢🚨]'
+FANCY_FONT_RANGES = r'[\U0001F100-\U0001F1FF\U0001D400-\U0001D7FF\u2460-\u24FF\u1D00-\u1D7F\u0250-\u02AF\u0370-\u03FF]'
 
 PROMO_KEYWORDS = re.compile(
     r'(?:join|credit|by|follow|subscribe|channel|group|telegram|t\.me|http[s]?://|@\w+)',
@@ -22,9 +22,14 @@ def is_promotional_or_decorative_line(line: str) -> bool:
     # Count decorative symbols and fancy font characters
     total_chars = len(line_stripped)
     decor_count = len(re.findall(f'(?:{DECORATIVE_SYMBOLS}|{FANCY_FONT_RANGES})', line_stripped))
+    valid_text_chars = len(re.findall(r'[\u0900-\u097Fa-zA-Z0-9\?\!\,\.\:\;\-\"\'\(\)\/]', line_stripped))
 
     # If more than 35% of the line is decorative symbols or fancy font
     if total_chars > 0 and (decor_count / total_chars) >= 0.35:
+        return True
+
+    # If valid text characters are less than 30% of total chars (for line >= 5 chars)
+    if total_chars >= 5 and (valid_text_chars / total_chars) < 0.30:
         return True
 
     # Short lines with promo keywords
@@ -36,9 +41,10 @@ def is_promotional_or_decorative_line(line: str) -> bool:
 def clean_question_text(text: str) -> str:
     """
     Cleans question text from forwarded polls and messages by removing:
-    - Leading counters/brackets ([49/55], Q1., 1., etc.)
-    - Leading emojis, symbols, and boxed/squared watermark logos (🔥, 🎯, 🅂🄺, 🅖🅚, etc.)
+    - Multiple consecutive leading counters/brackets ([2/11] [2/55], [49/55], Q1., 1., etc.)
+    - Leading emojis, symbols, and boxed/squared watermark logos (🔥, 🎯, 🅂🄺, 🅖🅚, ✱✍️, etc.)
     - Bottom promotional lines, channel names, and decorative borders (e.g. ♡◄••───○ ⇣sᴏɴηᴀᴍ⤾○───••► ♡, @channel, links)
+    - Extra blank lines and whitespace
     """
     if not text:
         return ""
@@ -65,31 +71,35 @@ def clean_question_text(text: str) -> str:
     suffix_pattern = re.compile(rf'(?:{DECORATIVE_SYMBOLS}|{FANCY_FONT_RANGES}|\s)+$')
     result = suffix_pattern.sub('', result).strip()
 
-    # Repeatedly strip leading counters, emojis, symbols, and boxed font characters
-    prefix_pattern = re.compile(
-        rf'^(?:'
-        rf'\s*\[\s*\d+\s*/\s*\d+\s*\]|'
-        rf'\s*\(\s*\d+\s*/\s*\d+\s*\)|'
-        rf'\s*\[\s*\d+\s*\]|'
-        rf'\s*Q(?:uestion)?\s*[\.\:\-]?\s*\d+\s*[\.\:\-\)]|'
-        rf'\s*Q(?:uestion)?\s*\d+|'
-        rf'\s*प्रश्न\s*[\.\:\-]?\s*\d+\s*[\.\:\-\)]|'
-        rf'\s*प्र\.\s*\d+\s*[\.\:\-\)]|'
-        rf'\s*\d+\s*[\.\:\-\)]|'
-        rf'{DECORATIVE_SYMBOLS}|'
-        rf'{FANCY_FONT_RANGES}|'
-        rf'\s'
-        rf')+',
+    counter_pattern = re.compile(
+        rf'^\s*(?:'
+        rf'\[\s*\d+\s*/\s*\d+\s*\]|'
+        rf'\(\s*\d+\s*/\s*\d+\s*\)|'
+        rf'\[\s*\d+\s*\]|'
+        rf'Q(?:uestion)?\s*[\.\:\-]?\s*\d+\s*[\.\:\-\)]?|'
+        rf'(?:प्रश्न|प्र)\s*[\.\:\-]?\s*\d+\s*[\.\:\-\)]?|'
+        rf'\d+\s*[\.\:\-\)]'
+        rf')\s*',
         re.IGNORECASE
+    )
+
+    symbol_prefix_pattern = re.compile(
+        rf'^\s*(?:{DECORATIVE_SYMBOLS}|{FANCY_FONT_RANGES}|\s)+\s*'
     )
 
     prev = None
     while result != prev:
         prev = result
-        result = prefix_pattern.sub('', result).strip()
+        # 1. Strip leading counters
+        result = counter_pattern.sub('', result).strip()
+        # 2. Strip leading symbols/emojis
+        result = symbol_prefix_pattern.sub('', result).strip()
 
     # Re-clean trailing symbols in case stripping prefix revealed trailing emojis
     result = suffix_pattern.sub('', result).strip()
+
+    # Normalize multiple spaces
+    result = re.sub(r'[ \t]+', ' ', result).strip()
 
     return result
 
