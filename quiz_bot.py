@@ -35,9 +35,15 @@ from telegram.error import RetryAfter, TimedOut, NetworkError
 
 import config
 import db
-import mtproto_worker
+try:
+    import mtproto_worker
+except ImportError:
+    mtproto_worker = None
 from parser import parse_questions_message, clean_question_text
-from leaderboard_image import generate_leaderboard_image
+try:
+    from leaderboard_image import generate_leaderboard_image
+except ImportError:
+    generate_leaderboard_image = None
 
 import sys
 import io
@@ -2485,6 +2491,7 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                             break
                         try:
                             await bot.send_photo(chat_id=group_id, photo=photo_file_id, protect_content=True)
+                            await asyncio.sleep(0.2)
                             break
                         except Exception as pe:
                             logger.error(f"Error sending photo for Q{idx} (attempt {photo_attempt}/3): {pe}")
@@ -2529,6 +2536,9 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                             if msg_attempt < 5:
                                 await asyncio.sleep(0.3)
                     
+                    # Short breather delay to prevent hitting group rate limit between message & poll
+                    await asyncio.sleep(0.1)
+
                 # Send poll with robust retry & RetryAfter handling
                 poll_msg = None
                 poll_attempts = 4
@@ -2554,17 +2564,15 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                             "question": poll_question_text,
                             "options": display_options,
                             "type": Poll.QUIZ,
+                            "correct_option_id": correct_id,
                             "is_anonymous": False,
                             "open_period": open_p,
                             "protect_content": True
                         }
-                        try:
-                            poll_kwargs["correct_option_ids"] = [correct_id]
-                            poll_msg = await bot.send_poll(**poll_kwargs)
-                        except TypeError:
-                            poll_kwargs.pop("correct_option_ids", None)
-                            poll_kwargs["correct_option_id"] = correct_id
-                            poll_msg = await bot.send_poll(**poll_kwargs)
+                        if q_explanation:
+                            poll_kwargs["explanation"] = q_explanation
+
+                        poll_msg = await bot.send_poll(**poll_kwargs)
                         break
                     except RetryAfter as e:
                         retry_wait = float(e.retry_after)
@@ -2602,12 +2610,12 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                 poll_created_wall_time = time.time()
                 rtt_sec = poll_created_monotonic - t_poll_create_start
 
-                # Align local wait with Telegram server open_period countdown (starts at poll creation time)
-                effective_wait = float(current_wait)
-                target_end_monotonic = poll_created_monotonic + effective_wait + 0.1
+                # Subtract half of the API RTT so local timer expires at the exact millisecond Telegram server auto-closes the poll
+                effective_wait = max(0.5, current_wait - (rtt_sec / 2.0))
+                target_end_monotonic = poll_created_monotonic + effective_wait
 
                 poll_creation_ms = rtt_sec * 1000.0
-                print(f"[QUIZ TIMING] Q{idx} poll created: {poll_creation_ms:.2f}ms | RTT: {rtt_sec:.2f}s | Effective wait: {effective_wait:.3f}s", flush=True)
+                print(f"[QUIZ TIMING] Q{idx} poll created: {poll_creation_ms:.2f}ms | RTT offset: {(rtt_sec * 500.0):.2f}ms | Effective wait: {effective_wait:.3f}s", flush=True)
 
                 # Register poll in map for user answer score tracking
                 p_id = poll_msg.poll.id
@@ -2719,8 +2727,7 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     participants = active_session["participants"]
     if user_id not in participants:
-        first_name = user.first_name or "User"
-        full_name = first_name + (f" {user.last_name}" if user.last_name else "")
+        full_name = user.first_name + (f" {user.last_name}" if user.last_name else "")
         participants[user_id] = {
             "user_id": user_id,
             "name": full_name,
@@ -2841,7 +2848,6 @@ async def send_quiz_leaderboard(bot, group_id: int, session: dict):
 
     full_text = "\n".join(msg_lines)
 
-    # Send Text Leaderboard Report
     if len(full_text) <= 4000:
         await bot.send_message(chat_id=group_id, text=full_text)
     else:
@@ -2965,8 +2971,8 @@ async def clone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if now - last_update_time < 2.0 and current < total:
             return
         last_update_time = now
-        bar = mtproto_worker.format_progress_bar(current, total)
-        eta = mtproto_worker.format_eta(current, total)
+        bar = mtproto_worker.format_progress_bar(current, total) if mtproto_worker else "[░░░░░░░░░░] 0%"
+        eta = mtproto_worker.format_eta(current, total) if mtproto_worker else "0s"
         text_update = (
             f"🔄 <b>Cloning...</b>\n"
             f"{bar}\n"
@@ -2978,7 +2984,7 @@ async def clone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-    if mtproto_worker.is_mtproto_configured():
+    if mtproto_worker and mtproto_worker.is_mtproto_configured():
         try:
             questions = await mtproto_worker.clone_quiz_from_token(token, progress_callback=on_progress)
             if questions:
