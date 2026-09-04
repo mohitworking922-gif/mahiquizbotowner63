@@ -2485,7 +2485,6 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                             break
                         try:
                             await bot.send_photo(chat_id=group_id, photo=photo_file_id, protect_content=True)
-                            await asyncio.sleep(0.2)
                             break
                         except Exception as pe:
                             logger.error(f"Error sending photo for Q{idx} (attempt {photo_attempt}/3): {pe}")
@@ -2530,9 +2529,6 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                             if msg_attempt < 5:
                                 await asyncio.sleep(0.3)
                     
-                    # Short breather delay to prevent hitting group rate limit between message & poll
-                    await asyncio.sleep(0.1)
-
                 # Send poll with robust retry & RetryAfter handling
                 poll_msg = None
                 poll_attempts = 4
