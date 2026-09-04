@@ -2841,15 +2841,7 @@ async def send_quiz_leaderboard(bot, group_id: int, session: dict):
 
     full_text = "\n".join(msg_lines)
 
-    # 1. Send PNG Leaderboard Image Card
-    try:
-        image_stream = generate_leaderboard_image(sorted_p, quiz_name=quiz_name, max_rows=15)
-        short_caption = f"🏆 <b>{quiz_name}</b> - Final Results"
-        await bot.send_photo(chat_id=group_id, photo=image_stream, caption=short_caption, parse_mode="HTML")
-    except Exception as img_err:
-        logger.error(f"Error generating/sending leaderboard image: {img_err}")
-
-    # 2. Send Text Leaderboard Report
+    # Send Text Leaderboard Report
     if len(full_text) <= 4000:
         await bot.send_message(chat_id=group_id, text=full_text)
     else:
