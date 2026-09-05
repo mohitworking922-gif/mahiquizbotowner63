@@ -39,9 +39,7 @@ try:
     import mtproto_worker
 except ImportError:
     mtproto_worker = None
-
 from parser import parse_questions_message, clean_question_text
-
 try:
     from leaderboard_image import generate_leaderboard_image
 except ImportError:
@@ -99,9 +97,11 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.exception(context.error)
 
 # State management for private chat Quiz creation
+# user_states[user_id] = { "step": "WAITING_NAME" | "WAITING_QUESTIONS" | "WAITING_TIMER", "name": str, "questions": list }
 user_states: Dict[int, Dict[str, Any]] = {}
 
 # Active quiz sessions
+# active_quizzes[quiz_id] = { ... }
 active_quizzes: Dict[str, Dict[str, Any]] = {}
 
 # Mapping poll_id -> { quiz_id, q_idx, correct_option_id, poll_start_time }
@@ -167,6 +167,8 @@ def format_quiz_to_txt(questions: list) -> str:
                 lines.append(f"{opt} ✅")
             else:
                 lines.append(opt)
+        if q.get("explanation"):
+            lines.append(f"Ex: {q['explanation']}")
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
 
@@ -821,6 +823,7 @@ async def handle_private_message(update: Update, context: ContextTypes.DEFAULT_T
     elif step == "WAITING_QUESTIONS":
         if not text or text.startswith("/"):
             return
+
 
         parsed = parse_questions_message(text)
         if not parsed:
@@ -2490,6 +2493,7 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                             break
                         try:
                             await bot.send_photo(chat_id=group_id, photo=photo_file_id, protect_content=True)
+                            await asyncio.sleep(0.2)
                             break
                         except Exception as pe:
                             logger.error(f"Error sending photo for Q{idx} (attempt {photo_attempt}/3): {pe}")
@@ -2534,6 +2538,9 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                             if msg_attempt < 5:
                                 await asyncio.sleep(0.3)
                     
+                    # Short breather delay to prevent hitting group rate limit between message & poll
+                    await asyncio.sleep(0.1)
+
                 # Send poll with robust retry & RetryAfter handling
                 poll_msg = None
                 poll_attempts = 4
@@ -2559,17 +2566,15 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                             "question": poll_question_text,
                             "options": display_options,
                             "type": Poll.QUIZ,
+                            "correct_option_id": correct_id,
                             "is_anonymous": False,
                             "open_period": open_p,
                             "protect_content": True
                         }
-                        try:
-                            poll_kwargs["correct_option_ids"] = [correct_id]
-                            poll_msg = await bot.send_poll(**poll_kwargs)
-                        except TypeError:
-                            poll_kwargs.pop("correct_option_ids", None)
-                            poll_kwargs["correct_option_id"] = correct_id
-                            poll_msg = await bot.send_poll(**poll_kwargs)
+                        if q_explanation:
+                            poll_kwargs["explanation"] = q_explanation
+
+                        poll_msg = await bot.send_poll(**poll_kwargs)
                         break
                     except RetryAfter as e:
                         retry_wait = float(e.retry_after)
@@ -2607,12 +2612,12 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                 poll_created_wall_time = time.time()
                 rtt_sec = poll_created_monotonic - t_poll_create_start
 
-                # Align local wait with Telegram server open_period countdown (starts at poll creation time)
-                effective_wait = float(current_wait)
-                target_end_monotonic = poll_created_monotonic + effective_wait + 0.1
+                # Subtract half of the API RTT so local timer expires at the exact millisecond Telegram server auto-closes the poll
+                effective_wait = max(0.5, current_wait - (rtt_sec / 2.0))
+                target_end_monotonic = poll_created_monotonic + effective_wait
 
                 poll_creation_ms = rtt_sec * 1000.0
-                print(f"[QUIZ TIMING] Q{idx} poll created: {poll_creation_ms:.2f}ms | RTT: {rtt_sec:.2f}s | Effective wait: {effective_wait:.3f}s", flush=True)
+                print(f"[QUIZ TIMING] Q{idx} poll created: {poll_creation_ms:.2f}ms | RTT offset: {(rtt_sec * 500.0):.2f}ms | Effective wait: {effective_wait:.3f}s", flush=True)
 
                 # Register poll in map for user answer score tracking
                 p_id = poll_msg.poll.id
@@ -2724,8 +2729,7 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     participants = active_session["participants"]
     if user_id not in participants:
-        first_name = user.first_name or "User"
-        full_name = first_name + (f" {user.last_name}" if user.last_name else "")
+        full_name = user.first_name + (f" {user.last_name}" if user.last_name else "")
         participants[user_id] = {
             "user_id": user_id,
             "name": full_name,
@@ -2846,7 +2850,6 @@ async def send_quiz_leaderboard(bot, group_id: int, session: dict):
 
     full_text = "\n".join(msg_lines)
 
-    # Send Text Leaderboard Report
     if len(full_text) <= 4000:
         await bot.send_message(chat_id=group_id, text=full_text)
     else:
@@ -2900,6 +2903,7 @@ async def clone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Clear any pending interactive quiz creation state
     user_states.pop(user.id, None)
+
 
     target_msg = msg.reply_to_message if msg.reply_to_message else msg
 
@@ -3044,7 +3048,7 @@ async def clone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="HTML"
             )
     else:
-        status = config.get_mtproto_status() if hasattr(config, "get_mtproto_status") else {"API_ID_SET": False, "API_HASH_SET": False, "SESSION_SET": False}
+        status = config.get_mtproto_status()
         api_id_status = "✅ YES" if status["API_ID_SET"] else "❌ NO (Missing TELEGRAM_API_ID)"
         api_hash_status = "✅ YES" if status["API_HASH_SET"] else "❌ NO (Missing TELEGRAM_API_HASH)"
         session_status = "✅ YES" if status["SESSION_SET"] else "❌ NO (Missing MTPROTO_SESSION_STRING)"
