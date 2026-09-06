@@ -160,18 +160,27 @@ def get_quizzes_by_user(user_id: int = 0, limit: int = 20):
                 break
     return results
 
-def save_schedule(quiz_id: str, scheduled_timestamp: float, time_str: str, group_id: int = 0):
+def save_schedule(quiz_id: str, scheduled_timestamp: float, time_str: str, group_id: int = 0, shuffle_mode: str = "none", opt_count: str = "all"):
     _memory_schedules[quiz_id] = {
         "quiz_id": quiz_id,
         "scheduled_timestamp": scheduled_timestamp,
         "time_str": time_str,
-        "group_id": group_id
+        "group_id": group_id,
+        "shuffle_mode": shuffle_mode,
+        "opt_count": opt_count
     }
     if schedules_col is not None:
         try:
             schedules_col.update_one(
                 {"quiz_id": quiz_id},
-                {"$set": {"quiz_id": quiz_id, "scheduled_timestamp": scheduled_timestamp, "time_str": time_str, "group_id": group_id}},
+                {"$set": {
+                    "quiz_id": quiz_id,
+                    "scheduled_timestamp": scheduled_timestamp,
+                    "time_str": time_str,
+                    "group_id": group_id,
+                    "shuffle_mode": shuffle_mode,
+                    "opt_count": opt_count
+                }},
                 upsert=True
             )
         except Exception as e:
@@ -187,7 +196,9 @@ def get_active_schedules():
                         "quiz_id": d.get("quiz_id"),
                         "scheduled_timestamp": d.get("scheduled_timestamp"),
                         "time_str": d.get("time_str"),
-                        "group_id": d.get("group_id", 0)
+                        "group_id": d.get("group_id", 0),
+                        "shuffle_mode": d.get("shuffle_mode", "none"),
+                        "opt_count": d.get("opt_count", "all")
                     }
                     for d in docs
                 ]

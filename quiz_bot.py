@@ -405,6 +405,31 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Invalid time format. Use HH:MM in 24-hour format (e.g., 09:00 or 21:30).")
         return
 
+    # Optional shuffle arguments: e.g. /schedule <quiz_id> <HH:MM> [q|o|b] [2|4|all]
+    shuf_mode = "none"
+    opt_cnt = "all"
+    shuf_label = ""
+    if len(args) >= 3:
+        raw_shuf = args[2].strip().lower()
+        if raw_shuf in ["q", "questions", "question"]:
+            shuf_mode = "questions"
+            shuf_label = "🔀 Questions"
+        elif raw_shuf in ["o", "options", "option"]:
+            shuf_mode = "options"
+            shuf_label = "🔀 Options"
+        elif raw_shuf in ["b", "both"]:
+            shuf_mode = "both"
+            shuf_label = "🔀 Both (Questions & Options)"
+
+        if len(args) >= 4 and shuf_mode in ["options", "both"]:
+            raw_cnt = args[3].strip().lower()
+            if raw_cnt in ["2", "first2", "first_2"]:
+                opt_cnt = "2"
+                shuf_label += " (First 2)"
+            elif raw_cnt in ["4", "first4", "first_4"]:
+                opt_cnt = "4"
+                shuf_label += " (First 4)"
+
     target_group = chat.id if chat.type != "private" else config.GROUP_ID
 
     now = datetime.datetime.now(IST_TZ)
@@ -414,7 +439,7 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         scheduled_dt += datetime.timedelta(days=1)
 
     epoch_timestamp = scheduled_dt.timestamp()
-    db.save_schedule(quiz_id, epoch_timestamp, time_str, group_id=target_group)
+    db.save_schedule(quiz_id, epoch_timestamp, time_str, group_id=target_group, shuffle_mode=shuf_mode, opt_count=opt_cnt)
 
     time_am_pm = scheduled_dt.strftime("%I:%M %p")
     day_month = scheduled_dt.strftime("%d %b")
@@ -425,12 +450,15 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     minutes_left = (total_seconds % 3600) // 60
 
     quiz_name = quiz_data["name"]
-    announcement = (
-        f"✅ Scheduled!\n\n"
-        f"📝 '{quiz_name}'\n"
-        f"🕒 {time_am_pm}, {day_month}\n"
+    ann_lines = [
+        f"✅ Scheduled!\n",
+        f"📝 '{quiz_name}'",
+        f"🕒 {time_am_pm}, {day_month}",
         f"⏱️ In {hours_left}h {minutes_left}m"
-    )
+    ]
+    if shuf_label:
+        ann_lines.append(f"{shuf_label}")
+    announcement = "\n".join(ann_lines)
 
     try:
         if target_group != 0:
@@ -452,17 +480,23 @@ async def schedules_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("ℹ️ No active scheduled quizzes.")
         return
 
-    lines = ["📅 Active Schedules:"]
+    now_ts = time.time()
+    lines = ["⏰ **Active Scheduled Quizzes:**\n"]
     for s in schedules:
-        quiz_id = s["quiz_id"]
-        time_str = s["time_str"]
-        ts = s["scheduled_timestamp"]
-        dt = datetime.datetime.fromtimestamp(ts, tz=ZoneInfo("Asia/Kolkata"))
-        time_am_pm = dt.strftime("%I:%M %p")
-        day_month = dt.strftime("%d %b")
-        lines.append(f"- ID: `{quiz_id}` | Time: `{time_str}` ({time_am_pm}, {day_month})")
+        q_id = s.get("quiz_id")
+        time_str = s.get("time_str")
+        ts = s.get("scheduled_timestamp", 0)
+        s_mode = s.get("shuffle_mode", "none")
+        s_cnt = s.get("opt_count", "all")
+        remaining = max(0, int(ts - now_ts))
+        hrs = remaining // 3600
+        mins = (remaining % 3600) // 60
+        quiz_data = db.get_quiz(q_id)
+        name = quiz_data.get("name", "Quiz") if quiz_data else q_id
+        shuf_info = f" | 🔀 {s_mode.capitalize()}" if s_mode != "none" else ""
+        lines.append(f"• **{name}** (`{q_id}`) at **{time_str}** (in {hrs}h {mins}m){shuf_info}")
 
-    await update.message.reply_text("\n".join(lines))
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
 async def unschedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -504,7 +538,10 @@ async def scheduler_loop(application):
                         quiz_data = await asyncio.to_thread(db.get_quiz, quiz_id)
                         target_group = s.get("group_id") or config.GROUP_ID
                         if quiz_data and target_group != 0:
-                            asyncio.create_task(run_quiz_session(application.bot, target_group, quiz_data))
+                            s_mode = s.get("shuffle_mode", "none")
+                            s_cnt = s.get("opt_count", "all")
+                            shuffled_qs = apply_quiz_shuffle(quiz_data.get("questions", []), shuffle_mode=s_mode, opt_count=s_cnt) if s_mode != "none" else None
+                            asyncio.create_task(run_quiz_session(application.bot, target_group, quiz_data, custom_questions=shuffled_qs))
             except Exception as e:
                 print(f"[ERROR] Exception in scheduler_loop: {e}", flush=True)
             await asyncio.sleep(10)
