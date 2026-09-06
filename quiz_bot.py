@@ -2449,30 +2449,46 @@ def apply_quiz_shuffle(questions: list, shuffle_mode: str = "none", opt_count: s
 
     # 1. Shuffle Questions sequence
     if shuffle_mode in ["questions", "both"]:
-        random.shuffle(shuffled_qs)
+        if len(shuffled_qs) > 1:
+            orig_order = [q.get("question_text") for q in shuffled_qs]
+            for _ in range(10):
+                random.shuffle(shuffled_qs)
+                if [q.get("question_text") for q in shuffled_qs] != orig_order:
+                    break
 
     # 2. Shuffle Options within each question
     if shuffle_mode in ["options", "both"]:
         for q in shuffled_qs:
             raw_options = q.get("options", [])
             correct_id = q.get("correct_option_id", 0)
-            if len(raw_options) < 2 or correct_id >= len(raw_options):
+            if len(raw_options) < 2 or correct_id < 0 or correct_id >= len(raw_options):
                 continue
 
             correct_opt_val = raw_options[correct_id]
 
             n = len(raw_options)
-            if opt_count == "2":
+            opt_cnt_str = str(opt_count).lower().strip()
+            if opt_cnt_str == "2":
                 n = min(2, len(raw_options))
-            elif opt_count == "4":
+            elif opt_cnt_str == "4":
                 n = min(4, len(raw_options))
-            elif opt_count == "all":
+            else:
                 n = len(raw_options)
+
+            if n < 2:
+                continue
 
             prefix_opts = list(raw_options[:n])
             suffix_opts = list(raw_options[n:])
 
-            random.shuffle(prefix_opts)
+            # Ensure options order is genuinely changed for every question
+            if len(set(prefix_opts)) >= 2:
+                orig_prefix = list(prefix_opts)
+                for _ in range(15):
+                    random.shuffle(prefix_opts)
+                    if prefix_opts != orig_prefix:
+                        break
+
             new_options = prefix_opts + suffix_opts
 
             try:
