@@ -1,8 +1,10 @@
 import asyncio
+import copy
 import html
 import logging
 import math
 import os
+import random
 import re
 import time
 import httpx
@@ -1840,19 +1842,107 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             else:
                 session["timer"] = timer_val
 
-            step3_text = (
-                f"⏱️ **Timer set: {timer_val}s**\n\n"
-                "All set! Press Start when ready."
-            )
+            step3_text = "🔀 **Shuffle?**"
             step3_keyboard = [
                 [
-                    InlineKeyboardButton("▶️ Start Quiz", callback_data=f"qw_start_{quiz_id}")
+                    InlineKeyboardButton("🔀 Questions", callback_data=f"qw_shuf_q_{quiz_id}"),
+                    InlineKeyboardButton("🔀 Options", callback_data=f"qw_shuf_o_{quiz_id}"),
+                    InlineKeyboardButton("🔀 Both", callback_data=f"qw_shuf_b_{quiz_id}")
+                ],
+                [
+                    InlineKeyboardButton("⏭️ No Shuffle", callback_data=f"qw_shuf_none_{quiz_id}")
                 ]
             ]
             try:
                 await query.message.edit_text(step3_text, reply_markup=InlineKeyboardMarkup(step3_keyboard), parse_mode="Markdown")
             except Exception:
                 pass
+            return
+
+        if data.startswith("qw_shuf_none_"):
+            quiz_id = data.replace("qw_shuf_none_", "").strip()
+            quiz_data = db.get_quiz(quiz_id)
+            if quiz_data:
+                timer = session.get("timer", quiz_data.get("timer", 20)) if session else quiz_data.get("timer", 20)
+                mark = session.get("correct_mark", 1.0) if session else 1.0
+                save_last_settings(user.id, query.message.chat_id, timer, mark)
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+                group_wizard_sessions.pop(wizard_key, None)
+                asyncio.create_task(run_quiz_session(context.bot, query.message.chat_id, quiz_data, query.message, custom_timer=timer, custom_correct_mark=mark, custom_questions=None))
+            return
+
+        if data.startswith("qw_shuf_q_"):
+            quiz_id = data.replace("qw_shuf_q_", "").strip()
+            quiz_data = db.get_quiz(quiz_id)
+            if quiz_data:
+                timer = session.get("timer", quiz_data.get("timer", 20)) if session else quiz_data.get("timer", 20)
+                mark = session.get("correct_mark", 1.0) if session else 1.0
+                save_last_settings(user.id, query.message.chat_id, timer, mark)
+                shuffled_qs = apply_quiz_shuffle(quiz_data.get("questions", []), shuffle_mode="questions")
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+                group_wizard_sessions.pop(wizard_key, None)
+                asyncio.create_task(run_quiz_session(context.bot, query.message.chat_id, quiz_data, query.message, custom_timer=timer, custom_correct_mark=mark, custom_questions=shuffled_qs))
+            return
+
+        if data.startswith("qw_shuf_o_") or data.startswith("qw_shuf_b_"):
+            is_both = data.startswith("qw_shuf_b_")
+            quiz_id = data.replace("qw_shuf_b_", "").replace("qw_shuf_o_", "").strip()
+            quiz_data = db.get_quiz(quiz_id)
+            if not quiz_data:
+                try:
+                    await query.answer("❌ Quiz not found.")
+                except Exception:
+                    pass
+                return
+
+            if not session:
+                session = {"quiz_id": quiz_id, "correct_mark": 1.0, "timer": quiz_data.get("timer", 20)}
+                group_wizard_sessions[wizard_key] = session
+            session["shuffle_mode"] = "both" if is_both else "options"
+
+            step4_text = (
+                "🔀 **Shuffle how many options?**\n"
+                "Only the first N option positions will be shuffled among themselves — the rest stay put."
+            )
+            step4_keyboard = [
+                [
+                    InlineKeyboardButton("First 2", callback_data=f"qw_shopt_2_{quiz_id}"),
+                    InlineKeyboardButton("First 4", callback_data=f"qw_shopt_4_{quiz_id}")
+                ],
+                [
+                    InlineKeyboardButton("All", callback_data=f"qw_shopt_all_{quiz_id}")
+                ]
+            ]
+            try:
+                await query.message.edit_text(step4_text, reply_markup=InlineKeyboardMarkup(step4_keyboard), parse_mode="Markdown")
+            except Exception:
+                pass
+            return
+
+        if data.startswith("qw_shopt_"):
+            rest = data.replace("qw_shopt_", "")
+            subparts = rest.split("_")
+            opt_count_val = subparts[0]
+            quiz_id = subparts[1] if len(subparts) > 1 else ""
+            quiz_data = db.get_quiz(quiz_id)
+            if quiz_data:
+                timer = session.get("timer", quiz_data.get("timer", 20)) if session else quiz_data.get("timer", 20)
+                mark = session.get("correct_mark", 1.0) if session else 1.0
+                shuf_mode = session.get("shuffle_mode", "options") if session else "options"
+                save_last_settings(user.id, query.message.chat_id, timer, mark)
+                shuffled_qs = apply_quiz_shuffle(quiz_data.get("questions", []), shuffle_mode=shuf_mode, opt_count=opt_count_val)
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+                group_wizard_sessions.pop(wizard_key, None)
+                asyncio.create_task(run_quiz_session(context.bot, query.message.chat_id, quiz_data, query.message, custom_timer=timer, custom_correct_mark=mark, custom_questions=shuffled_qs))
             return
 
         if data.startswith("qw_start_"):
@@ -2309,7 +2399,57 @@ async def send_launch_wizard_step1(bot, group_id: int, quiz_data: dict, reply_to
     return msg
 
 
-async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None, custom_timer=None, custom_correct_mark=None):
+def apply_quiz_shuffle(questions: list, shuffle_mode: str = "none", opt_count: str = "all") -> list:
+    """
+    Safely shuffles questions and/or options in-memory without mutating DB records.
+    - shuffle_mode: 'none' | 'questions' | 'options' | 'both'
+    - opt_count: '2' | '4' | 'all'
+    """
+    if not questions or shuffle_mode == "none":
+        return questions
+
+    shuffled_qs = copy.deepcopy(questions)
+
+    # 1. Shuffle Questions sequence
+    if shuffle_mode in ["questions", "both"]:
+        random.shuffle(shuffled_qs)
+
+    # 2. Shuffle Options within each question
+    if shuffle_mode in ["options", "both"]:
+        for q in shuffled_qs:
+            raw_options = q.get("options", [])
+            correct_id = q.get("correct_option_id", 0)
+            if len(raw_options) < 2 or correct_id >= len(raw_options):
+                continue
+
+            correct_opt_val = raw_options[correct_id]
+
+            n = len(raw_options)
+            if opt_count == "2":
+                n = min(2, len(raw_options))
+            elif opt_count == "4":
+                n = min(4, len(raw_options))
+            elif opt_count == "all":
+                n = len(raw_options)
+
+            prefix_opts = list(raw_options[:n])
+            suffix_opts = list(raw_options[n:])
+
+            random.shuffle(prefix_opts)
+            new_options = prefix_opts + suffix_opts
+
+            try:
+                new_correct_id = new_options.index(correct_opt_val)
+            except ValueError:
+                new_correct_id = correct_id
+
+            q["options"] = new_options
+            q["correct_option_id"] = new_correct_id
+
+    return shuffled_qs
+
+
+async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None, custom_timer=None, custom_correct_mark=None, custom_questions=None):
     if quiz_engine_bot is not None:
         bot = quiz_engine_bot
 
@@ -2330,7 +2470,7 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
 
     timer = int(custom_timer) if custom_timer is not None else quiz_data.get("timer", 20)
     correct_mark = float(custom_correct_mark) if custom_correct_mark is not None else 1.0
-    questions = quiz_data["questions"]
+    questions = custom_questions if custom_questions is not None else quiz_data["questions"]
     total_q = len(questions)
     sec_enabled = quiz_data.get("sections_enabled", 0)
     sections = quiz_data.get("sections", [])
