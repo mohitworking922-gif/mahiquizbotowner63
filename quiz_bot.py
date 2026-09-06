@@ -2441,6 +2441,7 @@ def apply_quiz_shuffle(questions: list, shuffle_mode: str = "none", opt_count: s
     Safely shuffles questions and/or options in-memory without mutating DB records.
     - shuffle_mode: 'none' | 'questions' | 'options' | 'both'
     - opt_count: '2' | '4' | 'all'
+    Uses index-based tracking so duplicate option texts are handled correctly.
     """
     if not questions or shuffle_mode == "none":
         return questions
@@ -2450,11 +2451,14 @@ def apply_quiz_shuffle(questions: list, shuffle_mode: str = "none", opt_count: s
     # 1. Shuffle Questions sequence
     if shuffle_mode in ["questions", "both"]:
         if len(shuffled_qs) > 1:
-            orig_order = [q.get("question_text") for q in shuffled_qs]
-            for _ in range(10):
-                random.shuffle(shuffled_qs)
-                if [q.get("question_text") for q in shuffled_qs] != orig_order:
+            orig_order = list(range(len(shuffled_qs)))
+            indexed = list(enumerate(shuffled_qs))
+            for _ in range(20):
+                random.shuffle(indexed)
+                new_order = [i for i, _ in indexed]
+                if new_order != orig_order:
                     break
+            shuffled_qs = [q for _, q in indexed]
 
     # 2. Shuffle Options within each question
     if shuffle_mode in ["options", "both"]:
@@ -2463,8 +2467,6 @@ def apply_quiz_shuffle(questions: list, shuffle_mode: str = "none", opt_count: s
             correct_id = q.get("correct_option_id", 0)
             if len(raw_options) < 2 or correct_id < 0 or correct_id >= len(raw_options):
                 continue
-
-            correct_opt_val = raw_options[correct_id]
 
             n = len(raw_options)
             opt_cnt_str = str(opt_count).lower().strip()
@@ -2478,22 +2480,25 @@ def apply_quiz_shuffle(questions: list, shuffle_mode: str = "none", opt_count: s
             if n < 2:
                 continue
 
-            prefix_opts = list(raw_options[:n])
-            suffix_opts = list(raw_options[n:])
+            # Build indexed pairs: (original_index, option_text)
+            prefix_indexed = list(range(n))          # [0, 1, 2, 3]
+            orig_indices = list(prefix_indexed)       # copy for comparison
 
-            # Ensure options order is genuinely changed for every question
-            if len(set(prefix_opts)) >= 2:
-                orig_prefix = list(prefix_opts)
-                for _ in range(15):
-                    random.shuffle(prefix_opts)
-                    if prefix_opts != orig_prefix:
-                        break
+            # Shuffle indices and guarantee the order is ALWAYS different
+            while True:
+                random.shuffle(prefix_indexed)
+                if prefix_indexed != orig_indices:
+                    break
 
-            new_options = prefix_opts + suffix_opts
+            # Build new options list from shuffled indices
+            new_options = [raw_options[i] for i in prefix_indexed] + list(raw_options[n:])
 
-            try:
-                new_correct_id = new_options.index(correct_opt_val)
-            except ValueError:
+            # Find where the correct answer landed using index tracking (not text matching)
+            if correct_id < n:
+                # The correct option was in the shuffled prefix
+                new_correct_id = prefix_indexed.index(correct_id)
+            else:
+                # The correct option was in the unshuffled suffix
                 new_correct_id = correct_id
 
             q["options"] = new_options
