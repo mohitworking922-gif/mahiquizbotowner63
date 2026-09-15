@@ -69,7 +69,11 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', line_buffering=True)
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 # Enable logging
 logging.basicConfig(
@@ -1519,25 +1523,27 @@ async def send_quiz_created_screen(update: Update, context: ContextTypes.DEFAULT
     safe_quiz_id = html.escape(str(quiz_id))
 
     msg_text = (
-        f"Quiz Created! 💬\n\n"
-        f"💳 Name: {safe_name}\n"
-        f"#️⃣ Questions: {q_count}\n"
-        f"⏰ Timer: {timer}s\n"
-        f"🆔 ID: <code>{safe_quiz_id}</code>\n"
-        f"💰 Type: free\n"
-        f"☠️ -ve: 0.00\n"
-        f"👧 Creator: {safe_creator}"
+        f"🎉 <b>Quiz \"{safe_name}\" ready!</b> ({q_count} questions)\n\n"
+        f"<b>Private link:</b>\n"
+        f"<code>{start_url}</code>\n\n"
+        f"👥 <i>To run it in a group, tap \"Start in Group\" below (the bot needs to be in/added to that group).</i>\n\n"
+        f"🆔 <b>Quiz ID:</b> <code>{safe_quiz_id}</code> | ⏰ <b>Timer:</b> {timer}s | 👧 <b>Creator:</b> {safe_creator}"
     )
 
     keyboard = [
         [
-            InlineKeyboardButton("🎯 Start", url=start_url)
+            InlineKeyboardButton("▶️ Start Here", url=start_url),
+            InlineKeyboardButton("👥 Start in Group ↗", url=group_url)
         ],
         [
-            InlineKeyboardButton("🚀 Group", url=group_url)
+            InlineKeyboardButton("➕ Add Questions", callback_data=f"ed_addq_{quiz_id}"),
+            InlineKeyboardButton("📈 Stats", callback_data=f"stats_{quiz_id}")
         ],
         [
-            InlineKeyboardButton("🔗 Share", switch_inline_query=quiz_id)
+            InlineKeyboardButton("🗳️ Share Quiz ↗", switch_inline_query=f"quiz_{quiz_id}")
+        ],
+        [
+            InlineKeyboardButton("🗑️ Delete", callback_data=f"ed_del_{quiz_id}")
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -1548,14 +1554,10 @@ async def send_quiz_created_screen(update: Update, context: ContextTypes.DEFAULT
     except Exception as e:
         logger.warning(f"Failed to send quiz created screen with HTML parse_mode: {e}, falling back to plain text")
         plain_msg = (
-            f"Quiz Created! 💬\n\n"
-            f"💳 Name: {name}\n"
-            f"#️⃣ Questions: {q_count}\n"
-            f"⏰ Timer: {timer}s\n"
-            f"🆔 ID: {quiz_id}\n"
-            f"💰 Type: free\n"
-            f"☠️ -ve: 0.00\n"
-            f"👧 Creator: {creator}"
+            f"🎉 Quiz \"{name}\" ready! ({q_count} questions)\n\n"
+            f"Private link:\n{start_url}\n\n"
+            f"To run it in a group, tap 'Start in Group' below.\n\n"
+            f"ID: {quiz_id} | Timer: {timer}s | Creator: {creator}"
         )
         await target_msg.reply_text(plain_msg, reply_markup=reply_markup)
 
@@ -1673,14 +1675,39 @@ async def myquizzes_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("ℹ️ Aapne abhi tak koi Quiz nahi banaya hai. Naya quiz banane ke liye /start bhejein!")
         return
 
-    lines = ["📚 **Aapke Banaye Hue Quizzes:**\n"]
-    for q in quizzes:
-        q_id = q.get("quiz_id")
-        name = q.get("name", "Quiz")
-        count = len(q.get("questions", []))
-        lines.append(f"• **{name}** (ID: `{q_id}`) - {count} Questions\n  Edit: `/edit {q_id}` | Start: `/start quiz_{q_id}`")
+    bot_obj = context.bot
+    try:
+        bot_username = bot_obj.username if getattr(bot_obj, "username", None) else (await bot_obj.get_me()).username
+    except Exception:
+        bot_username = ""
 
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await update.message.reply_text(f"📚 <b>Aapke Banaye Hue Quizzes ({len(quizzes)} Quizzes):</b>", parse_mode="HTML")
+
+    for q in quizzes[:10]:
+        q_id = q.get("quiz_id")
+        name = html.escape(str(q.get("name", "Quiz")))
+        count = len(q.get("questions", []))
+        timer = q.get("timer", 30)
+
+        start_url = f"https://t.me/{bot_username}?start=quiz_{q_id}" if bot_username else f"https://t.me/?start=quiz_{q_id}"
+        group_url = f"https://t.me/{bot_username}?startgroup=quiz_{q_id}" if bot_username else f"https://t.me/?startgroup=quiz_{q_id}"
+
+        msg_text = (
+            f"📝 <b>{name}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"🆔 <b>ID:</b> <code>{q_id}</code> | 🔢 <b>Questions:</b> {count} | ⏱️ {timer}s"
+        )
+        keyboard = [
+            [
+                InlineKeyboardButton("▶️ Start Here", url=start_url),
+                InlineKeyboardButton("👥 Start in Group ↗", url=group_url)
+            ],
+            [
+                InlineKeyboardButton("✏️ Edit Quiz", callback_data=f"sec_back_{q_id}"),
+                InlineKeyboardButton("🗑️ Delete", callback_data=f"ed_del_{q_id}")
+            ]
+        ]
+        await update.message.reply_text(msg_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):

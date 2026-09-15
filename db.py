@@ -60,7 +60,20 @@ if MONGO_URI:
         print(f"❌ MongoDB Connection Error in database.py: {e}")
 
 def init_db():
-    pass
+    if quizzes_col is not None:
+        try:
+            quizzes_col.create_index("quiz_id", unique=True)
+            quizzes_col.create_index("creator_id")
+            print("✅ MongoDB Indexes on 'quizzes' collection initialized successfully!")
+        except Exception as e:
+            print(f"⚠️ Notice on quizzes_col index creation: {e}")
+    if schedules_col is not None:
+        try:
+            schedules_col.create_index("quiz_id", unique=True)
+            schedules_col.create_index("scheduled_timestamp")
+            print("✅ MongoDB Indexes on 'schedules' collection initialized successfully!")
+        except Exception as e:
+            print(f"⚠️ Notice on schedules_col index creation: {e}")
 
 def generate_quiz_id():
     chars = string.ascii_uppercase + string.digits
