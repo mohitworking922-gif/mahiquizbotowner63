@@ -1508,6 +1508,7 @@ async def send_quiz_created_screen(update: Update, context: ContextTypes.DEFAULT
     q_count = len(quiz_data["questions"])
     timer = quiz_data["timer"]
     creator = quiz_data.get("creator_name", "MAHI 💗")
+    negative = float(quiz_data.get("negative", 0.0))
 
     bot_obj = context.bot
     try:
@@ -1523,27 +1524,25 @@ async def send_quiz_created_screen(update: Update, context: ContextTypes.DEFAULT
     safe_quiz_id = html.escape(str(quiz_id))
 
     msg_text = (
-        f"🎉 <b>Quiz \"{safe_name}\" ready!</b> ({q_count} questions)\n\n"
-        f"<b>Private link:</b>\n"
-        f"<code>{start_url}</code>\n\n"
-        f"👥 <i>To run it in a group, tap \"Start in Group\" below (the bot needs to be in/added to that group).</i>\n\n"
-        f"🆔 <b>Quiz ID:</b> <code>{safe_quiz_id}</code> | ⏰ <b>Timer:</b> {timer}s | 👧 <b>Creator:</b> {safe_creator}"
+        f"Quiz Created! 💬\n\n"
+        f"💳 Name: {safe_name}\n"
+        f"#️⃣ Questions: {q_count}\n"
+        f"⏰ Timer: {timer}s\n"
+        f"🆔 ID: <code>{safe_quiz_id}</code>\n"
+        f"💰 Type: free\n"
+        f"☠️ -ve: {negative:.2f}\n"
+        f"👧 Creator: {safe_creator}"
     )
 
     keyboard = [
         [
-            InlineKeyboardButton("▶️ Start Here", url=start_url),
-            InlineKeyboardButton("👥 Start in Group ↗", url=group_url)
+            InlineKeyboardButton("🎯 Start ↗", url=start_url)
         ],
         [
-            InlineKeyboardButton("➕ Add Questions", callback_data=f"ed_addq_{quiz_id}"),
-            InlineKeyboardButton("📈 Stats", callback_data=f"stats_{quiz_id}")
+            InlineKeyboardButton("🚀 Group ↗", url=group_url)
         ],
         [
-            InlineKeyboardButton("🗳️ Share Quiz ↗", switch_inline_query=f"quiz_{quiz_id}")
-        ],
-        [
-            InlineKeyboardButton("🗑️ Delete", callback_data=f"ed_del_{quiz_id}")
+            InlineKeyboardButton("🔗 Share ↗", switch_inline_query=quiz_id)
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -1554,10 +1553,14 @@ async def send_quiz_created_screen(update: Update, context: ContextTypes.DEFAULT
     except Exception as e:
         logger.warning(f"Failed to send quiz created screen with HTML parse_mode: {e}, falling back to plain text")
         plain_msg = (
-            f"🎉 Quiz \"{name}\" ready! ({q_count} questions)\n\n"
-            f"Private link:\n{start_url}\n\n"
-            f"To run it in a group, tap 'Start in Group' below.\n\n"
-            f"ID: {quiz_id} | Timer: {timer}s | Creator: {creator}"
+            f"Quiz Created! 💬\n\n"
+            f"💳 Name: {name}\n"
+            f"#️⃣ Questions: {q_count}\n"
+            f"⏰ Timer: {timer}s\n"
+            f"🆔 ID: {quiz_id}\n"
+            f"💰 Type: free\n"
+            f"☠️ -ve: {negative:.2f}\n"
+            f"👧 Creator: {creator}"
         )
         await target_msg.reply_text(plain_msg, reply_markup=reply_markup)
 
