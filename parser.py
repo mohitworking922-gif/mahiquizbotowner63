@@ -226,3 +226,60 @@ def parse_questions_message(text: str):
             parsed_questions.append(q)
 
     return parsed_questions
+
+def strip_option_prefix(opt: str) -> str:
+    """
+    Strips leading option prefixes like A., A), (A), A -, 1., 1), etc. from option text.
+    """
+    if not opt:
+        return ""
+    cleaned = re.sub(
+        r'^\s*(?:[A-Ja-j0-9]{1,2}\s*[\.\)\:\-]|[\(\[\{][A-Ja-j0-9]{1,2}[\)\]\}])\s*',
+        '',
+        opt.strip()
+    )
+    return cleaned.strip()
+
+def format_bilingual_question_html(idx: int, total_q: int, raw_question: str, options: list) -> str:
+    """
+    Formats a question card in clean HTML with bold Hindi, italic English, and single option prefixes.
+    """
+    def escape_html(text: str) -> str:
+        return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+    raw_q_clean = escape_html(raw_question.strip())
+
+    # Split bilingual question if separated by ' / ' or '? / '
+    q_parts = re.split(r'\s+/\s+', raw_q_clean, maxsplit=1)
+    if len(q_parts) == 2:
+        q_html = f"❓ <b>{q_parts[0]}</b>\n<i>{q_parts[1]}</i>"
+    else:
+        q_html = f"❓ <b>{raw_q_clean}</b>"
+
+    opt_prefixes = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]
+    formatted_opts = []
+
+    for o_i, opt in enumerate(options):
+        pref = opt_prefixes[o_i] if o_i < len(opt_prefixes) else f"{o_i+1}"
+        clean_opt = strip_option_prefix(opt)
+        clean_opt_escaped = escape_html(clean_opt)
+
+        # Split option bilingual if separated by ' / '
+        opt_parts = re.split(r'\s+/\s+', clean_opt_escaped, maxsplit=1)
+        if len(opt_parts) == 2:
+            opt_str = f" <b>{pref}.</b> {opt_parts[0]}\n      <i>{opt_parts[1]}</i>"
+        else:
+            opt_str = f" <b>{pref}.</b> {clean_opt_escaped}"
+
+        formatted_opts.append(opt_str)
+
+    card_html = (
+        f"📌 <b>Question {idx} / {total_q}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{q_html}\n\n"
+        f"🔤 <b>Options:</b>\n" +
+        "\n\n".join(formatted_opts) +
+        "\n━━━━━━━━━━━━━━━━━━━━━━"
+    )
+    return card_html
+

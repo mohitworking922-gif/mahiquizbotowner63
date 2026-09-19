@@ -41,7 +41,7 @@ try:
     import mtproto_worker
 except ImportError:
     mtproto_worker = None
-from parser import parse_questions_message, clean_question_text
+from parser import parse_questions_message, clean_question_text, strip_option_prefix, format_bilingual_question_html
 try:
     from leaderboard_image import generate_leaderboard_image
 except ImportError:
@@ -2731,27 +2731,13 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                 has_long_opt = any(len(opt) > 40 for opt in options)
                 is_long_q = len(q_text) > 200
                 if is_long_q or has_long_opt:
-                    if has_long_opt:
-                        opt_prefixes = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]
-                        formatted_opts = []
-                        for o_i, opt in enumerate(options):
-                            pref = opt_prefixes[o_i] if o_i < len(opt_prefixes) else f"{o_i+1}"
-                            formatted_opts.append(f"  {pref}. {opt}")
-                        
-                        long_msg_text = (
-                            f"📋 Q{idx}/{total_q}\n"
-                            f"❓ {raw_question}\n\n"
-                            f"🔤 Options:\n" +
-                            "\n".join(formatted_opts)
-                        )
-                    else:
-                        long_msg_text = f"📋 Q{idx}/{total_q} ❓ {raw_question}"
+                    long_msg_text = format_bilingual_question_html(idx, total_q, raw_question, options)
                     # Retry sending long message up to 5 times if rate-limited or transient network error occurs
                     for msg_attempt in range(1, 6):
                         if active_session.get("stopped", False):
                             break
                         try:
-                            await bot.send_message(chat_id=group_id, text=long_msg_text, protect_content=True)
+                            await bot.send_message(chat_id=group_id, text=long_msg_text, parse_mode="HTML", protect_content=True)
                             print(f"[QUIZ TIMING] Q{idx} full question and options sent: {((time.monotonic() - t_long_start) * 1000.0):.2f}ms", flush=True)
                             break
                         except RetryAfter as e:
@@ -2773,7 +2759,12 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                 open_p = min(max(5, int(current_wait)), 600)
                 q_text = f"[{idx}/{total_q}] {raw_question}"
                 poll_question_text = truncate_text(q_text, 200)
-                display_options = [truncate_text(opt, 40) for opt in options]
+                opt_prefixes = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]
+                display_options = []
+                for o_i, opt in enumerate(options):
+                    pref = opt_prefixes[o_i] if o_i < len(opt_prefixes) else f"{o_i+1}"
+                    clean_opt = strip_option_prefix(opt)
+                    display_options.append(truncate_text(f"{pref}) {clean_opt}", 40))
 
                 q_explanation = q_item.get("explanation", "").strip()
                 if q_explanation:
