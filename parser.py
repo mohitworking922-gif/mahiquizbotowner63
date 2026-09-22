@@ -4,14 +4,22 @@ DECORATIVE_SYMBOLS = r'[\U0001F000-\U0001FFFF\u2600-\u27BF\u2300-\u23FF\u2B00-\u
 FANCY_FONT_RANGES = r'[\U0001F100-\U0001F1FF\U0001D400-\U0001D7FF\u2460-\u24FF\u1D00-\u1D7F\u0250-\u02AF\u0370-\u03FF]'
 
 PROMO_KEYWORDS = re.compile(
-    r'(?:join|credit|by|follow|subscribe|channel|group|telegram|t\.me|http[s]?://|@\w+)',
+    r'(?:join\s+(?:channel|group)|credit|follow\s+us|subscribe|telegram\.me|t\.me|http[s]?://|@\w+)',
     re.IGNORECASE
 )
+
+option_prefix_regex = re.compile(r'^(?:[A-Za-z0-9][\.\)\:]|[\(\[\{][A-Za-z0-9][\)\]\}]|[\u25cb\u2022\u25cf\u25b6\U0001f170-\U0001f189])\s*')
 
 def is_promotional_or_decorative_line(line: str) -> bool:
     line_stripped = line.strip()
     if not line_stripped:
         return True
+
+    # Do not mark option lines as promo unless they contain actual links or @handles
+    if option_prefix_regex.match(line_stripped):
+        if re.search(r'(?:https?://\S+|t\.me/\S+|telegram\.me/\S+|@\w+)', line_stripped, re.IGNORECASE):
+            return True
+        return False
 
     # If line contains link or telegram handle
     if re.search(r'(?:https?://\S+|t\.me/\S+|telegram\.me/\S+|@\w+)', line_stripped, re.IGNORECASE):
@@ -39,13 +47,6 @@ def is_promotional_or_decorative_line(line: str) -> bool:
     return False
 
 def clean_question_text(text: str) -> str:
-    """
-    Cleans question text from forwarded polls and messages by removing:
-    - Multiple consecutive leading counters/brackets ([2/11] [2/55], [49/55], Q1., 1., etc.)
-    - Leading emojis, symbols, and boxed/squared watermark logos (🔥, 🎯, 🅂🄺, 🅖🅚, ✱✍️, etc.)
-    - Bottom promotional lines, channel names, and decorative borders (e.g. ♡◄••───○ ⇣sᴏɴηᴀᴍ⤾○───••► ♡, @channel, links)
-    - Extra blank lines and whitespace
-    """
     if not text:
         return ""
 
@@ -64,8 +65,6 @@ def clean_question_text(text: str) -> str:
         cleaned_lines = [text.strip()]
 
     result = "\n".join(cleaned_lines).strip()
-
-    # Clean trailing promo handles, links, and trailing decorative symbols/emojis
     result = re.sub(r'\s*(?:(?:Join|By|Credit)?\s*@\w+|https?://\S+|t\.me/\S+)\s*$', '', result, flags=re.IGNORECASE).strip()
 
     suffix_pattern = re.compile(rf'(?:{DECORATIVE_SYMBOLS}|{FANCY_FONT_RANGES}|\s)+$')
@@ -90,29 +89,19 @@ def clean_question_text(text: str) -> str:
     prev = None
     while result != prev:
         prev = result
-        # 1. Strip leading counters
         result = counter_pattern.sub('', result).strip()
-        # 2. Strip leading symbols/emojis
         result = symbol_prefix_pattern.sub('', result).strip()
 
-    # Re-clean trailing symbols in case stripping prefix revealed trailing emojis
     result = suffix_pattern.sub('', result).strip()
-
-    # Normalize multiple spaces
     result = re.sub(r'[ \t]+', ' ', result).strip()
 
     return result
 
 def parse_single_question_block(block_text: str):
-    """
-    Parses a single block of text containing question lines followed by options and optional Ex/Explanation lines.
-    Returns dict: {"question_text": str, "options": list, "correct_option_id": int, "explanation": str} or None if invalid.
-    """
     raw_lines = [line.strip() for line in block_text.strip().split("\n") if line.strip()]
     if len(raw_lines) < 3:
         return None
 
-    # Filter out standalone promotional/decorative lines (watermarks, borders, channel handles)
     filtered_lines = []
     for line in raw_lines:
         if is_promotional_or_decorative_line(line):
@@ -123,7 +112,6 @@ def parse_single_question_block(block_text: str):
     if len(raw_lines) < 3:
         return None
 
-    # Extract explanation if present (Ex:, EX:, ex:, Explanation:, explanation:, व्याख्या:)
     explanation = ""
     ex_idx = -1
     ex_regex = re.compile(r'^(?:Ex|EX|ex|Explanation|explanation|व्याख्या)\s*[:\-]\s*', re.IGNORECASE)
@@ -145,14 +133,15 @@ def parse_single_question_block(block_text: str):
     correct_line_idx = -1
     for i, line in enumerate(raw_lines):
         if "✅" in line:
-            if correct_line_idx != -1:
-                return None
-            correct_line_idx = i
+            if correct_line_idx == -1:
+                correct_line_idx = i
+            else:
+                line_clean = line.replace("✅", "").strip()
+                if re.match(r'^(?:[A-Za-z0-9][\.\)\:]|[\(\[\{][A-Za-z0-9][\)\]\}]|[\u25cb\u2022\u25cf\u25b6\U0001f170-\U0001f189])\s*', line_clean):
+                    correct_line_idx = i
 
     if correct_line_idx == -1:
         return None
-
-    option_prefix_regex = re.compile(r'^(?:[A-Za-z0-9][\.\)\:]|[\(\[\{][A-Za-z0-9][\)\]\}]|[\u25cb\u2022\u25cf\u25b6\U0001f170-\U0001f189])\s*')
 
     opt_start_idx = -1
     for i in range(correct_line_idx, 0, -1):
@@ -207,12 +196,7 @@ def parse_single_question_block(block_text: str):
     return res
 
 def parse_questions_message(text: str):
-    """
-    Parses input message which may contain one or multiple question blocks.
-    Returns list of question dicts.
-    """
     parsed_questions = []
-    
     blocks = re.split(r'\n\s*\n+', text.strip())
 
     for block in blocks:
