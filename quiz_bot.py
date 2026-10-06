@@ -2742,9 +2742,10 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                             logger.error(f"Error sending section announcement: {e}")
                 print(f"[QUIZ TIMING] Q{idx} section check: {((time.monotonic() - t_sec_start) * 1000.0):.2f}ms", flush=True)
 
-                # Send question photo if available
+                # Send question photo if available (skip in image_card mode — card already shows question)
+                card_mode = active_session.get("card_mode", quiz_data.get("card_mode", "1_card"))
                 photo_file_id = q_item.get("photo_file_id")
-                if photo_file_id:
+                if photo_file_id and card_mode != "image_card":
                     for photo_attempt in range(1, 4):
                         if active_session.get("stopped", False):
                             break

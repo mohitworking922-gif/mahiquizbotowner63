@@ -106,15 +106,15 @@ def get_pre_rendered_bg() -> Image.Image:
             logo_size = 480
             logo_r = logo_raw.resize((logo_size, logo_size), Image.Resampling.LANCZOS)
             
-            # 10% opacity
-            alpha_channel = Image.new("L", (logo_size, logo_size), 26)
+            # ~6% opacity (subtle background identity)
+            alpha_channel = Image.new("L", (logo_size, logo_size), 15)
             logo_r.putalpha(alpha_channel)
             
             lx = (W - logo_size) // 2
             ly = (H - logo_size) // 2 - 20
             bg_img.paste(logo_r, (lx, ly), logo_r)
         except Exception as le:
-            print(f"⚠️ Logo watermark notice: {le}")
+            print(f"Logo watermark notice: {le}")
 
     _PRE_RENDERED_BG = bg_img
     return _PRE_RENDERED_BG.copy()
@@ -123,6 +123,22 @@ def get_pre_rendered_bg() -> Image.Image:
 def _clean_option_text(opt_str: str) -> str:
     clean = re.sub(r'^(?:[A-Da-d0-9][\.\)\:]\s*|[\(\[\{][A-Da-d0-9][\)\]\}]\s*)', '', str(opt_str)).strip()
     return clean if clean else str(opt_str).strip()
+
+
+def _draw_mixed_text(draw, x, y, text, hi_font, en_font, fill):
+    """Render mixed Hindi+English text with dual fonts (no boxes).
+    Splits into Devanagari vs Latin/digit segments and uses correct font for each."""
+    segments = re.findall(r'[\u0900-\u0D7F]+|[^\u0900-\u0D7F]+', text)
+    cx = x
+    for seg in segments:
+        if re.search(r'[\u0900-\u0D7F]', seg):
+            font = hi_font
+        else:
+            font = en_font
+        draw.text((cx, y), seg, font=font, fill=fill)
+        bbox = draw.textbbox((0, 0), seg, font=font)
+        cx += bbox[2] - bbox[0]
+    return cx - x
 
 
 def generate_question_card(
@@ -186,8 +202,8 @@ def generate_question_card(
     q_h = 130
     draw.rounded_rectangle([44, q_top, W - 44, q_top + q_h], radius=18, fill=(22, 15, 48, 220), outline=BORDER_PURPLE + (255,), width=2)
 
-    # Question Text
-    draw.text((68, q_top + 22), q_hi, font=font_hi_main, fill=TEXT_WHITE + (255,))
+    # Question Text — dual font rendering for mixed Hindi+English
+    _draw_mixed_text(draw, 68, q_top + 22, q_hi, font_hi_main, font_en_main, TEXT_WHITE + (255,))
     if q_en:
         draw.text((68, q_top + 72), q_en, font=font_en_main, fill=TEXT_MUTED + (255,))
 
@@ -225,22 +241,20 @@ def generate_question_card(
         
         tx = 140
         ty = y1 + 24
-        draw.text((tx, ty), o_hi, font=font_hi_opt, fill=TEXT_WHITE + (255,))
+        # Option text — dual font rendering for mixed Hindi+English
+        hi_w = _draw_mixed_text(draw, tx, ty, o_hi, font_hi_opt, font_en_opt, TEXT_WHITE + (255,))
         
         if o_en:
-            hibbox = draw.textbbox((0, 0), o_hi, font=font_hi_opt)
-            hi_w = hibbox[2] - hibbox[0]
-            
             slash_x = tx + hi_w + 14
             draw.text((slash_x, ty), '/', font=font_en_opt, fill=TEXT_MUTED + (255,))
             
             en_x = slash_x + 18
             draw.text((en_x, ty + 2), o_en, font=font_en_opt, fill=TEXT_MUTED + (255,))
 
-    # Footer
-    footer_y = H - 45
+    # Footer (moved up 10px for better spacing)
+    footer_y = H - 55
     draw.line([(44, footer_y - 10), (W - 44, footer_y - 10)], fill=OPT_BORDER + (255,), width=1)
-    footer_text = "MAHI QUIZ BOT • STUDY • STRATEGY • DISCIPLINE"
+    footer_text = "MAHI QUIZ BOT \u2022 STUDY \u2022 STRATEGY \u2022 DISCIPLINE"
     fbbox = draw.textbbox((0, 0), footer_text, font=font_en_footer)
     fw = fbbox[2] - fbbox[0]
     draw.text(((W - fw) // 2, footer_y + 2), footer_text, font=font_en_footer, fill=TEXT_MUTED + (255,))
