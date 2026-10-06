@@ -2777,21 +2777,31 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                             quiz_name=quiz_data.get("name", ""),
                         )
                         
-                        # Single attempt only — no retry to prevent duplicate images
                         try:
-                            await bot.send_photo(chat_id=group_id, photo=card_buf, protect_content=True)
+                            await bot.send_photo(
+                                chat_id=group_id,
+                                photo=card_buf,
+                                protect_content=True,
+                                read_timeout=20.0,
+                                write_timeout=20.0
+                            )
                             image_card_sent = True
                             print(f"[QUIZ TIMING] Q{idx} image card sent: {((time.monotonic() - t_long_start) * 1000.0):.2f}ms", flush=True)
                         except RetryAfter as e:
-                            await asyncio.sleep(float(e.retry_after))
+                            retry_wait = float(e.retry_after)
+                            logger.warning(f"Rate limited on image card Q{idx}. Waiting {retry_wait}s...")
+                            await asyncio.sleep(retry_wait)
                             card_buf.seek(0)
-                            try:
-                                await bot.send_photo(chat_id=group_id, photo=card_buf, protect_content=True)
-                                image_card_sent = True
-                            except Exception:
-                                pass
+                            await bot.send_photo(
+                                chat_id=group_id,
+                                photo=card_buf,
+                                protect_content=True,
+                                read_timeout=20.0,
+                                write_timeout=20.0
+                            )
+                            image_card_sent = True
                         except Exception as e:
-                            logger.error(f"Image card Q{idx} send failed (skipping): {e}")
+                            logger.error(f"Image card Q{idx} send error (continuing with poll): {e}")
                     except Exception as img_err:
                         logger.error(f"Failed to generate image card for Q{idx}: {img_err}")
 
@@ -2838,8 +2848,8 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                 current_wait = active_session.get("timer", timer)
                 open_p = min(max(5, int(current_wait)), 600)
 
-                # In image_card mode: poll shows short A/B/C/D labels since full text is in image
-                if card_mode == "image_card" and image_card_sent:
+                # In image_card mode: poll ALWAYS shows short A/B/C/D labels for clean layout consistency
+                if card_mode == "image_card":
                     opt_labels = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]
                     poll_question_text = truncate_text(f"Q{idx}/{total_q} — Select correct option:", 300)
                     display_options = [opt_labels[i] if i < len(opt_labels) else str(i+1) for i in range(len(options))]

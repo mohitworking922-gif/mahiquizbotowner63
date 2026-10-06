@@ -262,8 +262,8 @@ def generate_question_card(
     # Composite layers
     final_img = Image.alpha_composite(base_img, card_layer).convert("RGB")
 
-    # Ultra-Fast JPEG Export (35 KB payload for instant Telegram network delivery)
+    # Ultra-Fast JPEG Export (~45 KB optimized payload for instant Telegram delivery)
     buf = io.BytesIO()
-    final_img.save(buf, format="JPEG", quality=88)
+    final_img.save(buf, format="JPEG", quality=78, optimize=True)
     buf.seek(0)
     return buf
