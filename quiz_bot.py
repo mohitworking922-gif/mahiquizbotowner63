@@ -2764,7 +2764,7 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                 has_long_opt = any(len(opt) > 40 for opt in options)
                 is_long_q = len(q_text) > 200
 
-                # IMAGE CARD MODE: Generate question card image and send as photo concurrently
+                # IMAGE CARD MODE: Generate question card image and send FIRST, then poll
                 image_card_sent = False
                 if card_mode == "image_card" and generate_question_card is not None:
                     try:
@@ -2775,25 +2775,22 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                             total_questions=total_q,
                             quiz_name=quiz_data.get("name", ""),
                         )
-                        image_card_sent = True
                         
-                        async def _send_img_card(c_buf=card_buf, q_idx=idx, t_start=t_long_start):
-                            for img_attempt in range(1, 4):
-                                if active_session.get("stopped", False):
-                                    break
-                                try:
-                                    await bot.send_photo(chat_id=group_id, photo=c_buf, protect_content=True)
-                                    print(f"[QUIZ TIMING] Q{q_idx} image card sent: {((time.monotonic() - t_start) * 1000.0):.2f}ms", flush=True)
-                                    break
-                                except RetryAfter as e:
-                                    await asyncio.sleep(float(e.retry_after))
-                                except Exception as e:
-                                    logger.error(f"Error sending image card Q{q_idx} (attempt {img_attempt}/3): {e}")
-                                    if img_attempt < 3:
-                                        c_buf.seek(0)
-                                        await asyncio.sleep(0.3)
-                        
-                        asyncio.create_task(_send_img_card())
+                        for img_attempt in range(1, 4):
+                            if active_session.get("stopped", False):
+                                break
+                            try:
+                                await bot.send_photo(chat_id=group_id, photo=card_buf, protect_content=True)
+                                image_card_sent = True
+                                print(f"[QUIZ TIMING] Q{idx} image card sent: {((time.monotonic() - t_long_start) * 1000.0):.2f}ms", flush=True)
+                                break
+                            except RetryAfter as e:
+                                await asyncio.sleep(float(e.retry_after))
+                            except Exception as e:
+                                logger.error(f"Error sending image card Q{idx} (attempt {img_attempt}/3): {e}")
+                                if img_attempt < 3:
+                                    card_buf.seek(0)
+                                    await asyncio.sleep(0.3)
                     except Exception as img_err:
                         logger.error(f"Failed to generate image card for Q{idx}: {img_err}")
 
