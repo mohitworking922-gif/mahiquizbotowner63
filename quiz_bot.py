@@ -2776,21 +2776,21 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                             quiz_name=quiz_data.get("name", ""),
                         )
                         
-                        for img_attempt in range(1, 4):
-                            if active_session.get("stopped", False):
-                                break
+                        # Single attempt only — no retry to prevent duplicate images
+                        try:
+                            await bot.send_photo(chat_id=group_id, photo=card_buf, protect_content=True)
+                            image_card_sent = True
+                            print(f"[QUIZ TIMING] Q{idx} image card sent: {((time.monotonic() - t_long_start) * 1000.0):.2f}ms", flush=True)
+                        except RetryAfter as e:
+                            await asyncio.sleep(float(e.retry_after))
+                            card_buf.seek(0)
                             try:
                                 await bot.send_photo(chat_id=group_id, photo=card_buf, protect_content=True)
                                 image_card_sent = True
-                                print(f"[QUIZ TIMING] Q{idx} image card sent: {((time.monotonic() - t_long_start) * 1000.0):.2f}ms", flush=True)
-                                break
-                            except RetryAfter as e:
-                                await asyncio.sleep(float(e.retry_after))
-                            except Exception as e:
-                                logger.error(f"Error sending image card Q{idx} (attempt {img_attempt}/3): {e}")
-                                if img_attempt < 3:
-                                    card_buf.seek(0)
-                                    await asyncio.sleep(0.3)
+                            except Exception:
+                                pass
+                        except Exception as e:
+                            logger.error(f"Image card Q{idx} send failed (skipping): {e}")
                     except Exception as img_err:
                         logger.error(f"Failed to generate image card for Q{idx}: {img_err}")
 
