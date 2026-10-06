@@ -46,6 +46,10 @@ try:
     from leaderboard_image import generate_leaderboard_image
 except ImportError:
     generate_leaderboard_image = None
+try:
+    from question_image import generate_question_card
+except ImportError:
+    generate_question_card = None
 
 import sys
 import io
@@ -1509,6 +1513,9 @@ async def send_quiz_created_screen(update: Update, context: ContextTypes.DEFAULT
     timer = quiz_data["timer"]
     creator = quiz_data.get("creator_name", "MAHI 💗")
     negative = float(quiz_data.get("negative", 0.0))
+    card_mode = quiz_data.get("card_mode", "1_card")
+    card_mode_map = {"1_card": "🎴 1 Card (Poll Only)", "2_card": "📜 2 Cards (Text+Poll)", "image_card": "🖼️ Image Card (Photo+Poll)"}
+    card_mode_str = card_mode_map.get(card_mode, card_mode_map["1_card"])
 
     bot_obj = context.bot
     try:
@@ -1528,6 +1535,7 @@ async def send_quiz_created_screen(update: Update, context: ContextTypes.DEFAULT
         f"💳 Name: {safe_name}\n"
         f"#️⃣ Questions: {q_count}\n"
         f"⏰ Timer: {timer}s\n"
+        f"🎴 Card Mode: {card_mode_str}\n"
         f"🆔 ID: <code>{safe_quiz_id}</code>\n"
         f"💰 Type: free\n"
         f"☠️ -ve: {negative:.2f}\n"
@@ -1557,6 +1565,7 @@ async def send_quiz_created_screen(update: Update, context: ContextTypes.DEFAULT
             f"💳 Name: {name}\n"
             f"#️⃣ Questions: {q_count}\n"
             f"⏰ Timer: {timer}s\n"
+            f"🎴 Card Mode: {card_mode_str}\n"
             f"🆔 ID: {quiz_id}\n"
             f"💰 Type: free\n"
             f"☠️ -ve: {negative:.2f}\n"
@@ -1573,8 +1582,13 @@ async def send_quiz_editor_screen(update: Update, context: ContextTypes.DEFAULT_
     negative = float(quiz_data.get("negative", 0.0))
     sec_enabled = quiz_data.get("sections_enabled", 0)
     sections = quiz_data.get("sections", [])
+    card_mode = quiz_data.get("card_mode", "1_card")
     sec_status_str = f"🟢 Enabled ({len(sections)} Sections)" if sec_enabled == 1 else "⚪ Disabled"
     toggle_sec_text = "📚 Sections: 🟢 Enabled" if sec_enabled == 1 else "📚 Sections: ⚪ Disabled"
+    cm_status_map = {"1_card": "🎴 1 Card (Poll Only)", "2_card": "📜 2 Cards (Text+Poll)", "image_card": "🖼️ Image Card"}
+    cm_btn_map = {"1_card": "🎴 Mode: 1 Card", "2_card": "📜 Mode: 2 Cards", "image_card": "🖼️ Mode: Image"}
+    card_mode_status_str = cm_status_map.get(card_mode, cm_status_map["1_card"])
+    toggle_cm_text = cm_btn_map.get(card_mode, cm_btn_map["1_card"])
 
     safe_name = html.escape(str(name))
     safe_quiz_id = html.escape(str(quiz_id))
@@ -1586,6 +1600,7 @@ async def send_quiz_editor_screen(update: Update, context: ContextTypes.DEFAULT_
         f"📌 <b>Name:</b> {safe_name}\n"
         f"🔢 <b>Questions:</b> {q_count}\n"
         f"⌚ <b>Timer:</b> {timer}s\n"
+        f"🎴 <b>Card Mode:</b> {card_mode_status_str}\n"
         f"📚 <b>Sections:</b> {sec_status_str}\n"
         f"➖ <b>Negative Marking:</b> {negative:.2f}\n"
         f"💰 <b>Access Type:</b> Free\n"
@@ -1604,17 +1619,18 @@ async def send_quiz_editor_screen(update: Update, context: ContextTypes.DEFAULT_
         ],
         [
             InlineKeyboardButton("➖ Negative Mark", callback_data=f"ed_neg_{quiz_id}"),
-            InlineKeyboardButton(toggle_sec_text, callback_data=f"sec_tog_{quiz_id}")
+            InlineKeyboardButton(toggle_cm_text, callback_data=f"cm_tog_{quiz_id}")
         ],
         [
-            InlineKeyboardButton("👁️ View Questions", callback_data=f"ed_view_{quiz_id}"),
+            InlineKeyboardButton(toggle_sec_text, callback_data=f"sec_tog_{quiz_id}"),
             InlineKeyboardButton("📚 Manage Sections", callback_data=f"sec_mgr_{quiz_id}")
         ],
         [
-            InlineKeyboardButton("📤 Export File", callback_data=f"ed_exp_{quiz_id}"),
-            InlineKeyboardButton("🗑️ Delete Quiz", callback_data=f"ed_del_{quiz_id}")
+            InlineKeyboardButton("👁️ View Questions", callback_data=f"ed_view_{quiz_id}"),
+            InlineKeyboardButton("📤 Export File", callback_data=f"ed_exp_{quiz_id}")
         ],
         [
+            InlineKeyboardButton("🗑️ Delete Quiz", callback_data=f"ed_del_{quiz_id}"),
             InlineKeyboardButton("❌ Close Editor", callback_data="ed_close")
         ]
     ]
@@ -2301,6 +2317,19 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             pass
         return
 
+    if data.startswith("cm_tog_"):
+        quiz_id = data.replace("cm_tog_", "").strip()
+        quiz_data = db.get_quiz(quiz_id)
+        if quiz_data:
+            curr_mode = quiz_data.get("card_mode", "1_card")
+            # Cycle: 1_card -> 2_card -> image_card -> 1_card
+            mode_cycle = {"1_card": "2_card", "2_card": "image_card", "image_card": "1_card"}
+            new_mode = mode_cycle.get(curr_mode, "1_card")
+            db.update_quiz_card_mode(quiz_id, new_mode)
+            quiz_data["card_mode"] = new_mode
+            await send_quiz_editor_screen(update, context, quiz_data)
+        return
+
     if data.startswith("sec_tog_"):
         quiz_id = data.replace("sec_tog_", "")
         quiz_data = db.get_quiz(quiz_id)
@@ -2728,12 +2757,48 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                             if photo_attempt < 3:
                                 await asyncio.sleep(0.5)
 
-                # Handle full question and options ONLY if exceeding Poll card capacity (200 chars question / 40 chars options)
+                # Handle full question and options based on card_mode
+                card_mode = active_session.get("card_mode", quiz_data.get("card_mode", "1_card"))
                 t_long_start = time.monotonic()
                 q_text = f"[{idx}/{total_q}] {raw_question}"
                 has_long_opt = any(len(opt) > 40 for opt in options)
                 is_long_q = len(q_text) > 200
-                if is_long_q or has_long_opt:
+
+                # IMAGE CARD MODE: Generate question card image and send as photo concurrently
+                image_card_sent = False
+                if card_mode == "image_card" and generate_question_card is not None:
+                    try:
+                        card_buf = generate_question_card(
+                            question_text=raw_question,
+                            options=options,
+                            q_number=idx,
+                            total_questions=total_q,
+                            quiz_name=quiz_data.get("name", ""),
+                        )
+                        image_card_sent = True
+                        
+                        async def _send_img_card(c_buf=card_buf, q_idx=idx, t_start=t_long_start):
+                            for img_attempt in range(1, 4):
+                                if active_session.get("stopped", False):
+                                    break
+                                try:
+                                    await bot.send_photo(chat_id=group_id, photo=c_buf, protect_content=True)
+                                    print(f"[QUIZ TIMING] Q{q_idx} image card sent: {((time.monotonic() - t_start) * 1000.0):.2f}ms", flush=True)
+                                    break
+                                except RetryAfter as e:
+                                    await asyncio.sleep(float(e.retry_after))
+                                except Exception as e:
+                                    logger.error(f"Error sending image card Q{q_idx} (attempt {img_attempt}/3): {e}")
+                                    if img_attempt < 3:
+                                        c_buf.seek(0)
+                                        await asyncio.sleep(0.3)
+                        
+                        asyncio.create_task(_send_img_card())
+                    except Exception as img_err:
+                        logger.error(f"Failed to generate image card for Q{idx}: {img_err}")
+
+                # 2_CARD MODE: Send long question as text message
+                elif card_mode == "2_card" and (is_long_q or has_long_opt):
                     if has_long_opt:
                         opt_prefixes = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]
                         formatted_opts = []
@@ -2774,9 +2839,16 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                 poll_attempts = 4
                 current_wait = active_session.get("timer", timer)
                 open_p = min(max(5, int(current_wait)), 600)
-                q_text = f"[{idx}/{total_q}] {raw_question}"
-                poll_question_text = truncate_text(q_text, 200)
-                display_options = [truncate_text(opt, 40) for opt in options]
+
+                # In image_card mode: poll shows short A/B/C/D labels since full text is in image
+                if card_mode == "image_card" and image_card_sent:
+                    opt_labels = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]
+                    poll_question_text = truncate_text(f"Q{idx}/{total_q} — Select correct option:", 300)
+                    display_options = [opt_labels[i] if i < len(opt_labels) else str(i+1) for i in range(len(options))]
+                else:
+                    q_text = f"[{idx}/{total_q}] {raw_question}"
+                    poll_question_text = truncate_text(q_text, 300)
+                    display_options = [truncate_text(opt, 100) for opt in options]
 
                 q_explanation = q_item.get("explanation", "").strip()
                 if q_explanation:
