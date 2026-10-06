@@ -2646,6 +2646,30 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
             cleanup_quiz_session(quiz_id)
             return
 
+        # Pre-generate all image cards in RAM background thread for 0ms generation delay during quiz
+        pre_card_buffers = {}
+        card_mode = active_session.get("card_mode", quiz_data.get("card_mode", "1_card"))
+        if card_mode == "image_card" and generate_question_card is not None:
+            def _pre_gen_all():
+                for q_i, q_obj in enumerate(questions, start=1):
+                    if active_session.get("stopped", False):
+                        break
+                    try:
+                        rq = q_obj.get("question_text", "")
+                        opts = q_obj.get("options", [])
+                        buf = generate_question_card(
+                            question_text=rq,
+                            options=opts,
+                            q_number=q_i,
+                            total_questions=total_q,
+                            quiz_name=name
+                        )
+                        pre_card_buffers[q_i] = buf
+                    except Exception as e:
+                        logger.error(f"Pre-gen card Q{q_i} error: {e}")
+
+            asyncio.get_event_loop().run_in_executor(None, _pre_gen_all)
+
         # 2. Iterate through questions using a while loop to ensure index advances only after successful poll creation
         idx = 1
         last_poll_close_time = None
@@ -2765,17 +2789,21 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                 has_long_opt = any(len(opt) > 40 for opt in options)
                 is_long_q = len(q_text) > 200
 
-                # IMAGE CARD MODE: Generate question card image and send FIRST, then poll
+                # IMAGE CARD MODE: Use pre-generated question card image for instant delivery
                 image_card_sent = False
                 if card_mode == "image_card" and generate_question_card is not None:
                     try:
-                        card_buf = generate_question_card(
-                            question_text=raw_question,
-                            options=options,
-                            q_number=idx,
-                            total_questions=total_q,
-                            quiz_name=quiz_data.get("name", ""),
-                        )
+                        card_buf = pre_card_buffers.get(idx)
+                        if card_buf is None:
+                            card_buf = generate_question_card(
+                                question_text=raw_question,
+                                options=options,
+                                q_number=idx,
+                                total_questions=total_q,
+                                quiz_name=quiz_data.get("name", ""),
+                            )
+                        else:
+                            card_buf.seek(0)
                         
                         try:
                             await bot.send_photo(
