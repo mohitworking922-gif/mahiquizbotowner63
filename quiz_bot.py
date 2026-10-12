@@ -1942,6 +1942,30 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 pass
             return
 
+        # Helper function to present Card/Display Mode Selection
+        async def _show_mode_step(q_id: str):
+            mode_text = (
+                "🎴 **Choose Quiz Display Mode:**\n\n"
+                "• **1 Card (Poll Only):** Standard interactive Telegram poll\n"
+                "• **2 Mode (Text + Poll):** Full question in text + option poll\n"
+                "• **Image Format (Image Card):** HD visual question card + instant A/B/C/D poll"
+            )
+            mode_keyboard = [
+                [
+                    InlineKeyboardButton("🎴 1 Card (Poll Only)", callback_data=f"qw_mode_1card_{q_id}")
+                ],
+                [
+                    InlineKeyboardButton("📄 2 Mode (Text + Poll)", callback_data=f"qw_mode_2card_{q_id}")
+                ],
+                [
+                    InlineKeyboardButton("🖼️ Image Format (Card)", callback_data=f"qw_mode_image_{q_id}")
+                ]
+            ]
+            try:
+                await query.message.edit_text(mode_text, reply_markup=InlineKeyboardMarkup(mode_keyboard), parse_mode="Markdown")
+            except Exception:
+                pass
+
         if data.startswith("qw_shuf_none_"):
             quiz_id = data.replace("qw_shuf_none_", "").strip()
             quiz_data = db.get_quiz(quiz_id)
@@ -1949,12 +1973,11 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 timer = session.get("timer", quiz_data.get("timer", 20)) if session else quiz_data.get("timer", 20)
                 mark = session.get("correct_mark", 1.0) if session else 1.0
                 save_last_settings(user.id, query.message.chat_id, timer, mark)
-                try:
-                    await query.message.delete()
-                except Exception:
-                    pass
-                group_wizard_sessions.pop(wizard_key, None)
-                asyncio.create_task(run_quiz_session(context.bot, query.message.chat_id, quiz_data, query.message, custom_timer=timer, custom_correct_mark=mark, custom_questions=None))
+                if not session:
+                    session = {"quiz_id": quiz_id, "correct_mark": mark, "timer": timer}
+                    group_wizard_sessions[wizard_key] = session
+                session["shuffled_questions"] = None
+                await _show_mode_step(quiz_id)
             return
 
         if data.startswith("qw_shuf_q_"):
@@ -1965,12 +1988,11 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 mark = session.get("correct_mark", 1.0) if session else 1.0
                 save_last_settings(user.id, query.message.chat_id, timer, mark)
                 shuffled_qs = apply_quiz_shuffle(quiz_data.get("questions", []), shuffle_mode="questions")
-                try:
-                    await query.message.delete()
-                except Exception:
-                    pass
-                group_wizard_sessions.pop(wizard_key, None)
-                asyncio.create_task(run_quiz_session(context.bot, query.message.chat_id, quiz_data, query.message, custom_timer=timer, custom_correct_mark=mark, custom_questions=shuffled_qs))
+                if not session:
+                    session = {"quiz_id": quiz_id, "correct_mark": mark, "timer": timer}
+                    group_wizard_sessions[wizard_key] = session
+                session["shuffled_questions"] = shuffled_qs
+                await _show_mode_step(quiz_id)
             return
 
         if data.startswith("qw_shuf_o_") or data.startswith("qw_shuf_b_"):
@@ -2020,12 +2042,45 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 shuf_mode = session.get("shuffle_mode", "options") if session else "options"
                 save_last_settings(user.id, query.message.chat_id, timer, mark)
                 shuffled_qs = apply_quiz_shuffle(quiz_data.get("questions", []), shuffle_mode=shuf_mode, opt_count=opt_count_val)
+                if not session:
+                    session = {"quiz_id": quiz_id, "correct_mark": mark, "timer": timer}
+                    group_wizard_sessions[wizard_key] = session
+                session["shuffled_questions"] = shuffled_qs
+                await _show_mode_step(quiz_id)
+            return
+
+        if data.startswith("qw_mode_"):
+            # qw_mode_1card_<quiz_id>, qw_mode_2card_<quiz_id>, qw_mode_image_<quiz_id>
+            rest = data.replace("qw_mode_", "")
+            subparts = rest.split("_")
+            raw_mode = subparts[0]
+            quiz_id = subparts[1] if len(subparts) > 1 else ""
+            quiz_data = db.get_quiz(quiz_id)
+            if quiz_data:
+                card_mode_map = {
+                    "1card": "1_card",
+                    "2card": "2_card",
+                    "image": "image_card"
+                }
+                chosen_mode = card_mode_map.get(raw_mode, "1_card")
+                timer = session.get("timer", quiz_data.get("timer", 20)) if session else quiz_data.get("timer", 20)
+                mark = session.get("correct_mark", 1.0) if session else 1.0
+                shuffled_qs = session.get("shuffled_questions", None) if session else None
                 try:
                     await query.message.delete()
                 except Exception:
                     pass
                 group_wizard_sessions.pop(wizard_key, None)
-                asyncio.create_task(run_quiz_session(context.bot, query.message.chat_id, quiz_data, query.message, custom_timer=timer, custom_correct_mark=mark, custom_questions=shuffled_qs))
+                asyncio.create_task(run_quiz_session(
+                    context.bot,
+                    query.message.chat_id,
+                    quiz_data,
+                    query.message,
+                    custom_timer=timer,
+                    custom_correct_mark=mark,
+                    custom_questions=shuffled_qs,
+                    custom_card_mode=chosen_mode
+                ))
             return
 
         if data.startswith("qw_start_"):
@@ -2035,12 +2090,11 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 timer = session.get("timer", quiz_data.get("timer", 20)) if session else quiz_data.get("timer", 20)
                 mark = session.get("correct_mark", 1.0) if session else 1.0
                 save_last_settings(user.id, query.message.chat_id, timer, mark)
-                try:
-                    await query.message.delete()
-                except Exception:
-                    pass
-                group_wizard_sessions.pop(wizard_key, None)
-                asyncio.create_task(run_quiz_session(context.bot, query.message.chat_id, quiz_data, query.message, custom_timer=timer, custom_correct_mark=mark))
+                if not session:
+                    session = {"quiz_id": quiz_id, "correct_mark": mark, "timer": timer}
+                    group_wizard_sessions[wizard_key] = session
+                session["shuffled_questions"] = None
+                await _show_mode_step(quiz_id)
             return
 
     if data == "create_sec_no":
@@ -2566,7 +2620,7 @@ def apply_quiz_shuffle(questions: list, shuffle_mode: str = "none", opt_count: s
     return shuffled_qs
 
 
-async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None, custom_timer=None, custom_correct_mark=None, custom_questions=None):
+async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None, custom_timer=None, custom_correct_mark=None, custom_questions=None, custom_card_mode=None):
     if quiz_engine_bot is not None:
         bot = quiz_engine_bot
 
@@ -2587,6 +2641,7 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
 
     timer = int(custom_timer) if custom_timer is not None else quiz_data.get("timer", 20)
     correct_mark = float(custom_correct_mark) if custom_correct_mark is not None else 1.0
+    chosen_card_mode = str(custom_card_mode) if custom_card_mode is not None else quiz_data.get("card_mode", "1_card")
     questions = custom_questions if custom_questions is not None else quiz_data["questions"]
     total_q = len(questions)
     sec_enabled = quiz_data.get("sections_enabled", 0)
@@ -2602,6 +2657,7 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
         "name": name,
         "timer": timer,
         "correct_mark": correct_mark,
+        "card_mode": chosen_card_mode,
         "total_questions": total_q,
         "sections_enabled": sec_enabled,
         "sections": sections,
