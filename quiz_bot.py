@@ -3270,6 +3270,10 @@ async def send_quiz_leaderboard(bot, group_id: int, session: dict):
             chat_id=group_id,
             text=f"🏁 Quiz Completed!\n\n📝 {quiz_name}\n\nNo participants attempted the quiz."
         )
+        try:
+            await send_attendance_dm_report(bot, group_id, session)
+        except Exception as att_err:
+            logger.error(f"Failed to record empty quiz report: {att_err}")
         return
 
     # Process score, accuracy, and format participant list
