@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import html
+import json
 import logging
 import math
 import os
@@ -92,6 +93,26 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 async def global_update_logger(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Track members seen in groups for attendance
+    try:
+        chat = None
+        user = None
+        if update.message:
+            chat = update.message.chat
+            user = update.message.from_user
+        elif update.callback_query:
+            chat = update.callback_query.message.chat if update.callback_query.message else None
+            user = update.callback_query.from_user
+        elif update.chat_member:
+            chat = update.chat_member.chat
+            user = update.chat_member.new_chat_member.user if update.chat_member.new_chat_member else None
+
+        if chat and chat.type in ("group", "supergroup") and user and not user.is_bot:
+            name = user.first_name + (f" {user.last_name}" if user.last_name else "")
+            db.upsert_group_member(chat.id, user.id, name, user.username or "")
+    except Exception:
+        pass
+
     if update.poll_answer:
         logger.debug(f"[UPDATE] PollAnswer from user_id={update.poll_answer.user.id}: poll_id={update.poll_answer.poll_id}")
     elif update.message:
@@ -168,6 +189,33 @@ def truncate_text(text: str, max_len: int) -> str:
     return text[:max_len - 3] + "..."
 
 
+AUTO_TIME_FILE = "auto_time.json"
+
+def calc_auto_time(question_text: str, options: list, base_timer: int) -> int:
+    total_chars = len(question_text) + sum(len(str(o)) for o in options)
+    free_chars = 150
+    extra = 0.0
+    if total_chars > free_chars:
+        extra = (total_chars - free_chars) / 12.0
+    extra = min(extra, 40)
+    return int(round(base_timer + extra))
+
+def get_auto_time() -> bool:
+    try:
+        with open(AUTO_TIME_FILE, "r", encoding="utf-8") as f:
+            return bool(json.load(f).get("enabled", False))
+    except Exception:
+        return False
+
+def set_auto_time(enabled: bool):
+    try:
+        with open(AUTO_TIME_FILE, "w", encoding="utf-8") as f:
+            json.dump({"enabled": bool(enabled)}, f)
+    except Exception as e:
+        logger.error(f"Failed to save auto time setting: {e}")
+
+
+
 def format_quiz_to_txt(questions: list) -> str:
     blocks = []
     for q in questions:
@@ -186,17 +234,12 @@ def format_quiz_to_txt(questions: list) -> str:
 import datetime
 from zoneinfo import ZoneInfo
 
-# Validate timezone availability at startup (Windows needs the 'tzdata' package).
+# Validate timezone availability at startup (Windows needs the 'tzdata' package or fallback timezone).
 try:
     IST_TZ = ZoneInfo("Asia/Kolkata")
-except Exception as _tz_err:
-    logger.critical(
-        "FATAL: Timezone 'Asia/Kolkata' not found. "
-        "Install the 'tzdata' package:  pip install tzdata"
-    )
-    raise SystemExit(
-        "Missing timezone data. Run:  pip install tzdata"
-    ) from _tz_err
+except Exception:
+    from datetime import timezone, timedelta
+    IST_TZ = timezone(timedelta(hours=5, minutes=30))
 
 # ==========================================
 # PAUSE / RESUME / STOP HANDLERS
@@ -1729,6 +1772,34 @@ async def myquizzes_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
 
 
+async def autotime_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    chat = update.effective_chat
+    if not user or not is_owner(user.id):
+        return
+    if chat.type != "private":
+        await update.message.reply_text("ℹ️ Ye command bot ke DM mein use karein.")
+        return
+    args = context.args
+    if not args:
+        status = "🟢 ON" if get_auto_time() else "⚪ OFF"
+        await update.message.reply_text(
+            f"🧠 Auto Time abhi: {status}\n\n"
+            f"/autotime on - lambe question par zyada time\n"
+            f"/autotime off - sab question par same timer"
+        )
+        return
+    val = args[0].strip().lower()
+    if val == "on":
+        set_auto_time(True)
+        await update.message.reply_text("🟢 Auto Time ON!\nAb lambe question/options ko zyada time milega.")
+    elif val == "off":
+        set_auto_time(False)
+        await update.message.reply_text("⚪ Auto Time OFF!\nAb sab questions par normal timer rahega.")
+    else:
+        await update.message.reply_text("❌ Format: /autotime on ya /autotime off")
+
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "🤖 **Quiz Bot Help & Commands Guide**\n\n"
@@ -1744,7 +1815,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• `/resume` - Paused quiz resume karein.\n"
         "• `/stop` - Running quiz stop karein.\n"
         "• `/fast` - Question timer speed badhayein.\n"
-        "• `/slow` - Question timer speed kam karein.\n\n"
+        "• `/slow` - Question timer speed kam karein.\n"
+        "• `/autotime [on/off]` - Auto Question Timer control (Owner DM).\n\n"
         "📋 **Manage Quizzes:**\n"
         "• `/myquizzes` - Aapke banaye saare quizzes dekhein.\n"
         "• `/edit <quiz_id>` - Quiz edit karein.\n"
@@ -2929,7 +3001,11 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                 # Send poll with robust retry & RetryAfter handling
                 poll_msg = None
                 poll_attempts = 4
-                current_wait = active_session.get("timer", timer)
+                base_timer = active_session.get("timer", timer)
+                if get_auto_time():
+                    current_wait = calc_auto_time(raw_question, options, base_timer)
+                else:
+                    current_wait = base_timer
                 open_p = min(max(5, int(current_wait)), 600)
 
                 # In image_card mode: poll ALWAYS shows short A/B/C/D labels for clean layout consistency
@@ -3130,8 +3206,14 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             "wrong": 0,
             "attempted_set": set(),
             "correct_q_indices": set(),
-            "total_time": 0.0
+            "total_time": 0.0,
+            "first_q_idx": q_idx,
+            "last_q_idx": q_idx
         }
+        # Save group member to database as well
+        chat_id = active_session.get("group_id")
+        if chat_id:
+            db.upsert_group_member(chat_id, user_id, full_name, user.username or "")
 
     p_data = participants[user_id]
 
@@ -3139,6 +3221,9 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if q_idx not in p_data["attempted_set"]:
         p_data["attempted_set"].add(q_idx)
         p_data["total_time"] += time_taken
+        if "first_q_idx" not in p_data:
+            p_data["first_q_idx"] = q_idx
+        p_data["last_q_idx"] = q_idx
         if "correct_q_indices" not in p_data:
             p_data["correct_q_indices"] = set()
 
@@ -3254,6 +3339,130 @@ async def send_quiz_leaderboard(bot, group_id: int, session: dict):
                 chunk += line + "\n"
         if chunk:
             await bot.send_message(chat_id=group_id, text=chunk)
+
+    # Send detailed attendance and member participation audit DM to OWNER
+    try:
+        await send_attendance_dm_report(bot, group_id, session)
+    except Exception as att_err:
+        logger.error(f"[quiz_id={quiz_id}] Failed to send attendance report DM: {att_err}")
+
+
+async def send_attendance_dm_report(bot, group_id: int, session: dict):
+    """
+    Sends a comprehensive attendance and participation audit report to OWNER_ID via private DM.
+    Categorizes members into:
+    1. Present (attended full / active throughout)
+    2. Late Joiners (joined after first few questions)
+    3. Left Mid-way (stopped answering before the end)
+    4. Absent (registered group members who did not participate)
+    """
+    target_owner = config.OWNER_ID
+    if not target_owner or target_owner == 0:
+        logger.warning("OWNER_ID is not configured in .env; skipping attendance DM.")
+        return
+
+    quiz_name = session.get("name", "Quiz")
+    total_q = session.get("questions_asked") or session.get("total_questions", 0)
+    participants = session.get("participants", {})
+
+    # Categorization buckets
+    full_attendees = []
+    late_joiners = []
+    left_midway = []
+
+    for uid, p in participants.items():
+        name = p.get("name", "User")
+        uname = f" (@{p['username']})" if p.get("username") else ""
+        attempted_count = len(p.get("attempted_set", set()))
+        first_q = p.get("first_q_idx", 1)
+        last_q = p.get("last_q_idx", 1)
+
+        is_late = first_q > 2
+        is_left_early = (total_q - last_q) >= 2 if total_q > 3 else (last_q < total_q)
+
+        user_label = f"• {name}{uname} [Attempted: {attempted_count}/{total_q}]"
+
+        if is_left_early and is_late:
+            left_midway.append(f"{user_label} (⏰ Joined at Q#{first_q}, 🚪 Left at Q#{last_q})")
+        elif is_left_early:
+            left_midway.append(f"{user_label} (🚪 Left after Q#{last_q})")
+        elif is_late:
+            late_joiners.append(f"{user_label} (⏰ Joined late at Q#{first_q})")
+        else:
+            full_attendees.append(f"{user_label} (✅ Full Quiz)")
+
+    # Fetch known group members from database to detect absent members
+    known_members = db.get_group_members(group_id)
+    absent_members = []
+    participant_ids = set(participants.keys())
+
+    for km in known_members:
+        km_uid = km.get("user_id")
+        if km_uid and km_uid not in participant_ids and km_uid != target_owner:
+            m_name = km.get("name", "User")
+            m_uname = f" (@{km['username']})" if km.get("username") else ""
+            absent_members.append(f"• {m_name}{m_uname}")
+
+    # Build report text
+    report_lines = [
+        "📊 *QUIZ ATTENDANCE & PARTICIPATION REPORT*",
+        "────────────────────────────",
+        f"📝 *Quiz:* {quiz_name}",
+        f"❓ *Total Questions:* {total_q}",
+        f"👥 *Total Participants:* {len(participants)}",
+        ""
+    ]
+
+    # 1. Full Present
+    report_lines.append(f"🟢 *PRESENT (Pura Attend Kiya) [{len(full_attendees)}]:*")
+    if full_attendees:
+        report_lines.extend(full_attendees)
+    else:
+        report_lines.append("• Koi nahi")
+    report_lines.append("")
+
+    # 2. Late Joiners
+    report_lines.append(f"⏰ *LATE ATTENDED (Der Se Aaye) [{len(late_joiners)}]:*")
+    if late_joiners:
+        report_lines.extend(late_joiners)
+    else:
+        report_lines.append("• Koi nahi")
+    report_lines.append("")
+
+    # 3. Left Mid-way
+    report_lines.append(f"⚠️ *LEFT MID-WAY (Bich Me Chhor Diya) [{len(left_midway)}]:*")
+    if left_midway:
+        report_lines.extend(left_midway)
+    else:
+        report_lines.append("• Koi nahi")
+    report_lines.append("")
+
+    # 4. Absent Members
+    if known_members:
+        report_lines.append(f"🔴 *ABSENT (Nahi Aaye) [{len(absent_members)}]:*")
+        if absent_members:
+            report_lines.extend(absent_members)
+        else:
+            report_lines.append("• Sabhi members ne participate kiya! 🎉")
+    else:
+        report_lines.append("ℹ️ _Group members history record ho rahi hai, agle quiz se absent list automatic show hogi._")
+
+    full_dm = "\n".join(report_lines)
+
+    # Deliver via DM to OWNER in safe chunk sizes
+    if len(full_dm) <= 4000:
+        await bot.send_message(chat_id=target_owner, text=full_dm, parse_mode="Markdown")
+    else:
+        chunk = ""
+        for line in report_lines:
+            if len(chunk) + len(line) + 2 > 4000:
+                await bot.send_message(chat_id=target_owner, text=chunk, parse_mode="Markdown")
+                chunk = line + "\n"
+            else:
+                chunk += line + "\n"
+        if chunk:
+            await bot.send_message(chat_id=target_owner, text=chunk, parse_mode="Markdown")
+
 
 
 from telegram import Bot
@@ -3506,6 +3715,7 @@ def main():
     app.add_handler(CommandHandler("stop", stop_command_quiz))
     app.add_handler(CommandHandler("fast", fast_command))
     app.add_handler(CommandHandler("slow", slow_command))
+    app.add_handler(CommandHandler("autotime", autotime_command))
     app.add_handler(CommandHandler("edit", edit_command))
     app.add_handler(CommandHandler("done_edit", done_edit_command))
     app.add_handler(CommandHandler("clone", clone_command))
