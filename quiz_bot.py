@@ -193,11 +193,11 @@ AUTO_TIME_FILE = "auto_time.json"
 
 def calc_auto_time(question_text: str, options: list, base_timer: int) -> int:
     total_chars = len(question_text) + sum(len(str(o)) for o in options)
-    free_chars = 150
+    free_chars = 140
     extra = 0.0
     if total_chars > free_chars:
-        extra = (total_chars - free_chars) / 12.0
-    extra = min(extra, 40)
+        extra = (total_chars - free_chars) / 25.0
+    extra = min(extra, 15)  # Cap extra time to maximum 15s so quiz moves fast
     return int(round(base_timer + extra))
 
 def get_auto_time() -> bool:
@@ -3080,8 +3080,8 @@ async def run_quiz_session(bot, group_id: int, quiz_data: dict, status_msg=None,
                 poll_created_wall_time = time.time()
                 rtt_sec = poll_created_monotonic - t_poll_create_start
 
-                # Subtract half of the API RTT so local timer expires at the exact millisecond Telegram server auto-closes the poll
-                effective_wait = max(0.5, current_wait - (rtt_sec / 2.0))
+                # Subtract API RTT so local timer expires at the exact second Telegram auto-closes the poll
+                effective_wait = max(0.5, current_wait - rtt_sec)
                 target_end_monotonic = poll_created_monotonic + effective_wait
 
                 poll_creation_ms = rtt_sec * 1000.0
@@ -3447,21 +3447,20 @@ async def send_attendance_dm_report(bot, group_id: int, session: dict):
     else:
         report_lines.append("ℹ️ _Group members history record ho rahi hai, agle quiz se absent list automatic show hogi._")
 
-    full_dm = "\n".join(report_lines)
-
-    # Deliver via DM to OWNER in safe chunk sizes
-    if len(full_dm) <= 4000:
-        await bot.send_message(chat_id=target_owner, text=full_dm, parse_mode="Markdown")
-    else:
-        chunk = ""
-        for line in report_lines:
-            if len(chunk) + len(line) + 2 > 4000:
-                await bot.send_message(chat_id=target_owner, text=chunk, parse_mode="Markdown")
-                chunk = line + "\n"
-            else:
-                chunk += line + "\n"
-        if chunk:
-            await bot.send_message(chat_id=target_owner, text=chunk, parse_mode="Markdown")
+    # Save report structure into database for Audit/Admin Bot (No DM from Main Bot)
+    try:
+        report_payload = {
+            "quiz_name": quiz_name,
+            "total_q": total_q,
+            "participants_count": len(participants),
+            "present": full_attendees,
+            "late": late_joiners,
+            "left_midway": left_midway,
+            "absent": absent_members
+        }
+        db.save_quiz_report(session.get("quiz_id", "manual"), group_id, quiz_name, total_q, report_payload)
+    except Exception as s_err:
+        logger.error(f"Error saving quiz report for audit bot: {s_err}")
 
 
 
