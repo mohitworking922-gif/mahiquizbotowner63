@@ -91,9 +91,11 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
+TARGET_AUDIT_GROUP_ID = -1003493006883
+
 
 async def global_update_logger(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Track members seen in groups for attendance
+    # Track members seen ONLY in target group for attendance
     try:
         chat = None
         user = None
@@ -107,7 +109,7 @@ async def global_update_logger(update: Update, context: ContextTypes.DEFAULT_TYP
             chat = update.chat_member.chat
             user = update.chat_member.new_chat_member.user if update.chat_member.new_chat_member else None
 
-        if chat and chat.type in ("group", "supergroup") and user and not user.is_bot:
+        if chat and chat.id == TARGET_AUDIT_GROUP_ID and user and not user.is_bot:
             name = user.first_name + (f" {user.last_name}" if user.last_name else "")
             db.upsert_group_member(chat.id, user.id, name, user.username or "")
     except Exception:
@@ -3210,9 +3212,9 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             "first_q_idx": q_idx,
             "last_q_idx": q_idx
         }
-        # Save group member to database as well
+        # Save group member to database only for target group
         chat_id = active_session.get("group_id")
-        if chat_id:
+        if chat_id == TARGET_AUDIT_GROUP_ID:
             db.upsert_group_member(chat_id, user_id, full_name, user.username or "")
 
     p_data = participants[user_id]
@@ -3353,18 +3355,9 @@ async def send_quiz_leaderboard(bot, group_id: int, session: dict):
 
 async def send_attendance_dm_report(bot, group_id: int, session: dict):
     """
-    Sends a comprehensive attendance and participation audit report to OWNER_ID via private DM.
-    Categorizes members into:
-    1. Present (attended full / active throughout)
-    2. Late Joiners (joined after first few questions)
-    3. Left Mid-way (stopped answering before the end)
-    4. Absent (registered group members who did not participate)
+    Saves a comprehensive attendance and participation audit report to database for target group only.
     """
     target_owner = config.OWNER_ID
-    if not target_owner or target_owner == 0:
-        logger.warning("OWNER_ID is not configured in .env; skipping attendance DM.")
-        return
-
     quiz_name = session.get("name", "Quiz")
     total_q = session.get("questions_asked") or session.get("total_questions", 0)
     participants = session.get("participants", {})
@@ -3407,51 +3400,10 @@ async def send_attendance_dm_report(bot, group_id: int, session: dict):
             m_uname = f" (@{km['username']})" if km.get("username") else ""
             absent_members.append(f"• {m_name}{m_uname}")
 
-    # Build report text
-    report_lines = [
-        "📊 *QUIZ ATTENDANCE & PARTICIPATION REPORT*",
-        "────────────────────────────",
-        f"📝 *Quiz:* {quiz_name}",
-        f"❓ *Total Questions:* {total_q}",
-        f"👥 *Total Participants:* {len(participants)}",
-        ""
-    ]
+    # Save report structure into database for Audit/Admin Bot ONLY for target group
+    if group_id != TARGET_AUDIT_GROUP_ID:
+        return
 
-    # 1. Full Present
-    report_lines.append(f"🟢 *PRESENT (Pura Attend Kiya) [{len(full_attendees)}]:*")
-    if full_attendees:
-        report_lines.extend(full_attendees)
-    else:
-        report_lines.append("• Koi nahi")
-    report_lines.append("")
-
-    # 2. Late Joiners
-    report_lines.append(f"⏰ *LATE ATTENDED (Der Se Aaye) [{len(late_joiners)}]:*")
-    if late_joiners:
-        report_lines.extend(late_joiners)
-    else:
-        report_lines.append("• Koi nahi")
-    report_lines.append("")
-
-    # 3. Left Mid-way
-    report_lines.append(f"⚠️ *LEFT MID-WAY (Bich Me Chhor Diya) [{len(left_midway)}]:*")
-    if left_midway:
-        report_lines.extend(left_midway)
-    else:
-        report_lines.append("• Koi nahi")
-    report_lines.append("")
-
-    # 4. Absent Members
-    if known_members:
-        report_lines.append(f"🔴 *ABSENT (Nahi Aaye) [{len(absent_members)}]:*")
-        if absent_members:
-            report_lines.extend(absent_members)
-        else:
-            report_lines.append("• Sabhi members ne participate kiya! 🎉")
-    else:
-        report_lines.append("ℹ️ _Group members history record ho rahi hai, agle quiz se absent list automatic show hogi._")
-
-    # Save report structure into database for Audit/Admin Bot (No DM from Main Bot)
     try:
         report_payload = {
             "quiz_name": quiz_name,
