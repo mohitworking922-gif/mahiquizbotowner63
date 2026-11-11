@@ -73,6 +73,17 @@ def _init_sqlite():
                         PRIMARY KEY (group_id, user_id)
                     )
                 """)
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS quiz_reports (
+                        quiz_id TEXT,
+                        group_id INTEGER,
+                        timestamp REAL,
+                        quiz_name TEXT,
+                        total_q INTEGER,
+                        report_data TEXT,
+                        PRIMARY KEY (quiz_id, timestamp)
+                    )
+                """)
             _safe_print("✅ SQLite Local Database (quiz_bot.db) Initialized Successfully!")
         except Exception as e:
             _safe_print(f"❌ SQLite Table Init Error: {e}")
@@ -165,6 +176,8 @@ if MONGO_URI:
             
         quizzes_col = db["quizzes"]
         schedules_col = db["schedules"]
+        members_col = db["group_members"]
+        reports_col = db["quiz_reports"]
         _safe_print(f"✅ Successfully connected to MongoDB Database: {db.name}")
     except Exception as e:
         _safe_print(f"❌ MongoDB Connection Error: {e}")
@@ -531,10 +544,37 @@ def upsert_group_member(group_id: int, user_id: int, name: str, username: str = 
         finally:
             conn.close()
 
+    if 'members_col' in globals() and members_col is not None:
+        try:
+            members_col.update_one(
+                {"group_id": group_id, "user_id": user_id},
+                {"$set": {"name": name, "username": username or "", "last_seen": now}},
+                upsert=True
+            )
+        except Exception as e:
+            _safe_print(f"❌ MongoDB upsert_group_member error: {e}")
+
 def get_group_members(group_id: int) -> list:
     """Get all known members for a group"""
     if not group_id:
         return []
+    
+    if 'members_col' in globals() and members_col is not None:
+        try:
+            docs = list(members_col.find({"group_id": group_id}))
+            if docs:
+                return [
+                    {
+                        "user_id": d["user_id"],
+                        "name": d["name"],
+                        "username": d.get("username", ""),
+                        "last_seen": d.get("last_seen", 0)
+                    }
+                    for d in docs
+                ]
+        except Exception as e:
+            _safe_print(f"❌ MongoDB get_group_members error: {e}")
+
     conn = _get_sqlite_conn()
     members = []
     if conn:
@@ -554,4 +594,79 @@ def get_group_members(group_id: int) -> list:
         finally:
             conn.close()
     return members
+
+def save_quiz_report(quiz_id: str, group_id: int, quiz_name: str, total_q: int, report_dict: dict):
+    """Save attendance report for Admin/Audit bot"""
+    import time
+    now = time.time()
+    rep_json = json.dumps(report_dict)
+    
+    conn = _get_sqlite_conn()
+    if conn:
+        try:
+            with conn:
+                conn.execute("""
+                    INSERT INTO quiz_reports (quiz_id, group_id, timestamp, quiz_name, total_q, report_data)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (quiz_id, group_id, now, quiz_name, total_q, rep_json))
+        except Exception as e:
+            _safe_print(f"❌ SQLite save_quiz_report error: {e}")
+        finally:
+            conn.close()
+
+    if 'reports_col' in globals() and reports_col is not None:
+        try:
+            reports_col.insert_one({
+                "quiz_id": quiz_id,
+                "group_id": group_id,
+                "timestamp": now,
+                "quiz_name": quiz_name,
+                "total_q": total_q,
+                "report_data": report_dict
+            })
+        except Exception as e:
+            _safe_print(f"❌ MongoDB save_quiz_report error: {e}")
+
+def get_latest_quiz_reports(limit: int = 10) -> list:
+    """Fetch latest quiz attendance reports for Admin bot"""
+    if 'reports_col' in globals() and reports_col is not None:
+        try:
+            docs = list(reports_col.find().sort("timestamp", -1).limit(limit))
+            if docs:
+                return [
+                    {
+                        "quiz_id": d["quiz_id"],
+                        "group_id": d.get("group_id", 0),
+                        "timestamp": d["timestamp"],
+                        "quiz_name": d.get("quiz_name", "Quiz"),
+                        "total_q": d.get("total_q", 0),
+                        "report_data": d["report_data"]
+                    }
+                    for d in docs
+                ]
+        except Exception as e:
+            _safe_print(f"❌ MongoDB get_latest_quiz_reports error: {e}")
+
+    conn = _get_sqlite_conn()
+    reports = []
+    if conn:
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT quiz_id, group_id, timestamp, quiz_name, total_q, report_data FROM quiz_reports ORDER BY timestamp DESC LIMIT ?", (limit,))
+            rows = cur.fetchall()
+            for r in rows:
+                reports.append({
+                    "quiz_id": r["quiz_id"],
+                    "group_id": r["group_id"],
+                    "timestamp": r["timestamp"],
+                    "quiz_name": r["quiz_name"],
+                    "total_q": r["total_q"],
+                    "report_data": json.loads(r["report_data"])
+                })
+        except Exception as e:
+            _safe_print(f"❌ SQLite get_latest_quiz_reports error: {e}")
+        finally:
+            conn.close()
+    return reports
+
 
