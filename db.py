@@ -63,6 +63,16 @@ def _init_sqlite():
                         opt_count TEXT
                     )
                 """)
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS group_members (
+                        group_id INTEGER,
+                        user_id INTEGER,
+                        name TEXT,
+                        username TEXT,
+                        last_seen REAL,
+                        PRIMARY KEY (group_id, user_id)
+                    )
+                """)
             _safe_print("✅ SQLite Local Database (quiz_bot.db) Initialized Successfully!")
         except Exception as e:
             _safe_print(f"❌ SQLite Table Init Error: {e}")
@@ -493,3 +503,55 @@ def delete_quiz(quiz_id: str):
             quizzes_col.delete_one({"quiz_id": quiz_id})
         except Exception as e:
             _safe_print(f"❌ MongoDB delete_quiz error: {e}")
+
+# ==========================================
+# GROUP MEMBERS TRACKING FOR ATTENDANCE
+# ==========================================
+
+def upsert_group_member(group_id: int, user_id: int, name: str, username: str = ""):
+    """Save or update known group member for attendance calculation"""
+    if not group_id or not user_id:
+        return
+    import time
+    now = time.time()
+    conn = _get_sqlite_conn()
+    if conn:
+        try:
+            with conn:
+                conn.execute("""
+                    INSERT INTO group_members (group_id, user_id, name, username, last_seen)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(group_id, user_id) DO UPDATE SET
+                        name = excluded.name,
+                        username = excluded.username,
+                        last_seen = excluded.last_seen
+                """, (group_id, user_id, name, username or "", now))
+        except Exception as e:
+            _safe_print(f"❌ SQLite upsert_group_member error: {e}")
+        finally:
+            conn.close()
+
+def get_group_members(group_id: int) -> list:
+    """Get all known members for a group"""
+    if not group_id:
+        return []
+    conn = _get_sqlite_conn()
+    members = []
+    if conn:
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT user_id, name, username, last_seen FROM group_members WHERE group_id = ?", (group_id,))
+            rows = cur.fetchall()
+            for r in rows:
+                members.append({
+                    "user_id": r["user_id"],
+                    "name": r["name"],
+                    "username": r["username"] or "",
+                    "last_seen": r["last_seen"]
+                })
+        except Exception as e:
+            _safe_print(f"❌ SQLite get_group_members error: {e}")
+        finally:
+            conn.close()
+    return members
+
